@@ -213,21 +213,41 @@ async fn workspace_root_that_is_itself_a_repository_does_not_scan_children() {
 }
 
 #[tokio::test]
-async fn workspace_discovery_skips_hidden_directories() {
+async fn workspace_discovery_includes_hidden_repository_directories() {
     let tmp = TempDir::new().expect("tempdir");
     init_committed_repo(&tmp.path().join("visible"));
-    // A hidden dir that is itself a repo must still be skipped.
-    init_committed_repo(&tmp.path().join(".hidden-repo"));
+    // A hidden directory that is itself a repo is still a project folder.
+    let hidden = init_committed_repo(&tmp.path().join(".hidden-repo"));
+    assert!(hidden.workdir().is_some());
 
     let provider = GitScmProvider::new();
     let root = workspace_root_at("ws", tmp.path(), "workspace");
     let repos = provider.discover(&root).await.expect("discover ok");
 
-    assert_eq!(
-        child_names(&repos),
-        vec!["visible".to_owned()],
-        "dot-directories are skipped"
+    assert_eq!(by_child(&repos, "visible").root.relative_path, "visible");
+    assert_eq!(by_child(&repos, ".hidden-repo").root.relative_path, ".hidden-repo");
+    assert_eq!(repos.len(), 2, "hidden repositories are candidates too");
+}
+
+#[tokio::test]
+#[cfg(windows)]
+async fn root_repository_with_hidden_git_directory_is_discovered() {
+    let tmp = TempDir::new().expect("tempdir");
+    init_committed_repo(tmp.path());
+    let git = tmp.path().join(".git");
+    assert!(
+        std::process::Command::new("attrib")
+            .args(["+h", git.to_str().expect("utf8 git path")])
+            .status()
+            .expect("run attrib")
+            .success()
     );
+
+    let provider = GitScmProvider::new();
+    let root = root_at("pe1", tmp.path(), "fixture");
+    let repos = provider.discover(&root).await.expect("discover ok");
+    assert_eq!(repos.len(), 1, "a hidden .git must not hide its repository");
+    assert_eq!(repos[0].root.relative_path, "");
 }
 
 #[tokio::test]
