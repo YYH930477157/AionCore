@@ -257,9 +257,11 @@ fn open_repo(path: &Path, relative_path: String) -> Result<Option<OpenedRepo>, g
 }
 
 /// Read one level of `root`'s child directories and surface each that opens as a
-/// repository. Never recurses. Skips dotfiles/hidden entries, non-directories,
+/// repository. Never recurses. Skips VCS metadata directories, non-directories,
 /// and symlinks (a symlink is not descended into — it is not a child directory
-/// of this workspace in any meaningful sense and could point anywhere).
+/// of this workspace in any meaningful sense and could point anywhere). Other
+/// hidden directories remain candidates: a checkout may carry the Windows Hidden
+/// attribute, and a project folder itself may start with a dot.
 ///
 /// A directory that fails to open as a repository is simply skipped; only a
 /// hard read error on an individual child is logged. A `read_dir` failure on the
@@ -280,8 +282,10 @@ fn discover_child_repos(root: &Path) -> Vec<OpenedRepo> {
         let Some(name) = name.to_str() else {
             continue;
         };
-        // Skip hidden entries (`.git`, `.DS_Store`, editor dirs, …).
-        if name.starts_with('.') {
+        // Skip the metadata directories themselves. Hidden *project* directories
+        // are still checked: Windows marks some checkouts hidden, and a folder
+        // whose name starts with a dot is a valid repository root.
+        if matches!(name.to_ascii_lowercase().as_str(), ".git" | ".svn" | ".hg") {
             continue;
         }
         // `file_type` does not follow symlinks, so a symlinked directory reports
