@@ -13,7 +13,7 @@ pub use permission::{
 };
 pub use session_updates::{
     AgentStatusEventData, AvailableCommandsEventData, CronTriggerEventData, PlanEventData, SkillSuggestEventData,
-    ThinkingEventData,
+    ThinkingEventData, UsageEventData,
 };
 pub use tool_call::{
     AcpToolCallContentItem, AcpToolCallEventData, AcpToolCallKind, AcpToolCallLocationItem,
@@ -54,6 +54,10 @@ pub enum AgentStreamEvent {
     AcpConfigOption(serde_json::Value),
     AcpSessionInfo(serde_json::Value),
     AcpContextUsage(serde_json::Value),
+    /// Per-LLM-call usage of the in-process aionrs engine (wire tag `usage`).
+    /// Forwarded to the WebSocket for the chat status bar; never persisted and
+    /// never user-visible turn output.
+    Usage(UsageEventData),
     /// Live snapshot of a client-hosted terminal (ACP `terminal/*`):
     /// `{terminal_id, command, output(cumulative), truncated, exit_status?}`.
     /// Emitted throttled while the delegated command runs, plus one final

@@ -234,6 +234,8 @@ impl ChannelMessageService {
             | AgentStreamEvent::AcpConfigOption(_)
             | AgentStreamEvent::AcpSessionInfo(_)
             | AgentStreamEvent::AcpContextUsage(_)
+            // Status-bar statistics for the web UI only.
+            | AgentStreamEvent::Usage(_)
             // Live terminal snapshots are a web-UI card refresh; the final
             // command outcome reaches the IM transcript via the tool result.
             | AgentStreamEvent::AcpTerminalOutput(_)

@@ -65,12 +65,13 @@ aionui-cron = { path = "crates/aionui-cron" }
 aionui-assistant = { path = "crates/aionui-assistant" }
 aionui-app = { path = "crates/aionui-app" }
 
-aion-agent = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
-aion-providers = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
-aion-types = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
-aion-protocol = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
-aion-config = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
-aion-mcp = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
+# Woody's aionrs fork: upstream v0.2.11 plus per-call usage reporting (OutputSink::emit_usage).
+aion-agent = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
+aion-providers = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
+aion-types = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
+aion-protocol = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
+aion-config = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
+aion-mcp = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
 
 # Core framework
 tokio = { version = "1", features = ["full"] }

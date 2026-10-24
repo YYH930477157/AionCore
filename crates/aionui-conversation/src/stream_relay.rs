@@ -808,6 +808,7 @@ impl StreamRelay {
             AgentStreamEvent::AcpConfigOption(_) => "AcpConfigOption",
             AgentStreamEvent::AcpSessionInfo(_) => "AcpSessionInfo",
             AgentStreamEvent::AcpContextUsage(_) => "AcpContextUsage",
+            AgentStreamEvent::Usage(_) => "Usage",
             AgentStreamEvent::AcpTerminalOutput(_) => "AcpTerminalOutput",
             AgentStreamEvent::AcpPromptHookWarning(_) => "AcpPromptHookWarning",
             AgentStreamEvent::SlashCommandsUpdated(_) => "SlashCommandsUpdated",

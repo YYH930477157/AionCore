@@ -1,9 +1,9 @@
-use aion_agent::output::OutputSink;
+use aion_agent::output::{CallUsage, OutputSink};
 use tokio::sync::broadcast;
 
 use crate::protocol::events::{
     AgentStreamEvent, ErrorEventData, FinishEventData, StartEventData, TextEventData, ThinkingEventData, TipType,
-    TipsEventData, ToolCallEventData, ToolCallStatus,
+    TipsEventData, ToolCallEventData, ToolCallStatus, UsageEventData,
 };
 
 pub struct BackendOutputSink {
@@ -155,6 +155,19 @@ impl OutputSink for BackendOutputSink {
             supersedes_key: None,
         }));
     }
+
+    fn emit_usage(&self, usage: &CallUsage) {
+        let _ = self.event_tx.send(AgentStreamEvent::Usage(UsageEventData {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_creation_tokens: usage.cache_creation_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            context_usage: usage.context_usage,
+            context_provider_reported: usage.context_provider_reported,
+            context_window: usage.context_window,
+            duration_ms: usage.duration_ms,
+        }));
+    }
 }
 
 #[cfg(test)]
@@ -291,6 +304,39 @@ mod tests {
             AgentStreamEvent::Finish(_) => {}
             other => panic!("Expected Finish, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn emit_usage_sends_the_usage_frame_the_status_bar_reads() {
+        let (sink, mut rx) = make_sink();
+        sink.emit_usage(&CallUsage {
+            input_tokens: 1200,
+            output_tokens: 300,
+            cache_creation_tokens: 100,
+            cache_read_tokens: 800,
+            context_usage: 1500,
+            context_provider_reported: true,
+            context_window: 200_000,
+            duration_ms: 2500,
+        });
+        let event = rx.try_recv().unwrap();
+        // The wire shape the renderer's `usage` case parses.
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({
+                "type": "usage",
+                "data": {
+                    "input_tokens": 1200,
+                    "output_tokens": 300,
+                    "cache_creation_tokens": 100,
+                    "cache_read_tokens": 800,
+                    "context_usage": 1500,
+                    "context_provider_reported": true,
+                    "context_window": 200_000,
+                    "duration_ms": 2500
+                }
+            })
+        );
     }
 
     #[test]
