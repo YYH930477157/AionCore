@@ -405,3 +405,61 @@ async fn re_discovery_keeps_subscribers_and_sequence() {
         "and the sequence continues rather than resetting"
     );
 }
+
+/// A repository the engine refuses to open. An unsupported format version stands
+/// in for any such refusal (an unreadable config, an ownership check): libgit2
+/// and the git executable both reject it.
+fn break_config(tmp: &TempDir) {
+    std::fs::write(
+        tmp.path().join(".git").join("config"),
+        "[core]\n\trepositoryformatversion = 99\n",
+    )
+    .expect("write");
+}
+
+#[tokio::test]
+async fn discovery_reports_why_a_root_shows_no_repository() {
+    let readable = TempDir::new().expect("tempdir");
+    let _repo = fixture(&readable);
+    let unreadable = TempDir::new().expect("tempdir");
+    let _broken = fixture(&unreadable);
+    break_config(&unreadable);
+
+    let (runtime, _dirty) = ScmRuntime::new().expect("runtime builds");
+    let found = runtime
+        .discover(
+            "proj-test",
+            &[root_of(&readable, "pe-ok"), root_of(&unreadable, "pe-broken")],
+        )
+        .await;
+
+    assert_eq!(found.len(), 1, "the readable repository is still listed");
+    let failures = runtime.discovery_failures("proj-test").await;
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert_eq!(failures[0].pe_id, "pe-broken");
+    assert_eq!(failures[0].path, unreadable.path().to_string_lossy());
+    assert!(failures[0].message.contains("discover"), "{}", failures[0].message);
+}
+
+#[tokio::test]
+async fn a_roots_recompute_reports_failures_only_when_they_change() {
+    let tmp = TempDir::new().expect("tempdir");
+    let _repo = fixture(&tmp);
+    break_config(&tmp);
+    let (runtime, _dirty) = ScmRuntime::new().expect("runtime builds");
+    let roots = [root_of(&tmp, "pe1")];
+
+    let (_, _, failures) = runtime.recompute_project("proj-test", &roots).await;
+    assert_eq!(failures.map(|f| f.len()), Some(1), "a new failure is reported");
+    let (_, _, failures) = runtime.recompute_project("proj-test", &roots).await;
+    assert!(failures.is_none(), "an unchanged failure is not repeated");
+
+    std::fs::write(
+        tmp.path().join(".git").join("config"),
+        "[core]\n\trepositoryformatversion = 0\n",
+    )
+    .expect("repair");
+    let (added, _, failures) = runtime.recompute_project("proj-test", &roots).await;
+    assert_eq!(added.len(), 1, "the repaired repository appears");
+    assert_eq!(failures, Some(vec![]), "and the cleared failure is reported as cleared");
+}

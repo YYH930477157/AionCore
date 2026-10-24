@@ -311,3 +311,33 @@ fn a_partial_failure_lists_only_the_failures() {
     );
     assert!(!outcome.is_complete());
 }
+
+#[test]
+fn repositories_changed_carries_failures_only_when_they_changed() {
+    let unchanged = repositories_changed("proj", &[repository(false, None)], &[], None);
+    assert!(unchanged["params"].get("failures").is_none(), "{unchanged}");
+
+    let cleared = repositories_changed("proj", &[], &[], Some(&[]));
+    assert_eq!(
+        cleared["params"]["failures"],
+        json!([]),
+        "an empty list clears the client's"
+    );
+
+    let failure = super::super::types::ScmDiscoveryFailure {
+        pe_id: "pe1".into(),
+        label: "firmware".into(),
+        path: "D:/firmware".into(),
+        message: "scm operation failed during discover: bad config".into(),
+    };
+    let failed = repositories_changed("proj", &[], &[], Some(std::slice::from_ref(&failure)));
+    assert_eq!(
+        failed["params"]["failures"],
+        json!([{
+            "pe_id": "pe1",
+            "label": "firmware",
+            "path": "D:/firmware",
+            "message": "scm operation failed during discover: bad config"
+        }])
+    );
+}

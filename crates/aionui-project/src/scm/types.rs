@@ -154,6 +154,22 @@ pub struct ScmRepository {
     pub state: ScmRepositoryState,
 }
 
+/// A root whose repository could not be opened during discovery.
+///
+/// Reported beside the repositories rather than dropped: without it the client
+/// can only say "no repository here", which is wrong when the folder holds one
+/// that failed to open — an unreadable or encrypted `.git`, an ownership refusal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScmDiscoveryFailure {
+    pub pe_id: String,
+    /// Display label of the root, as for a discovered repository.
+    pub label: String,
+    /// Local absolute path of the root, matching what the client lists as checked.
+    pub path: String,
+    /// The engine's own message, which usually names the file it could not read.
+    pub message: String,
+}
+
 /// Neutral per-resource change state.
 ///
 /// **Open set.** Stage 2 may add values (e.g. a merge state); consumers must

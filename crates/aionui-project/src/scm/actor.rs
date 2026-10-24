@@ -208,7 +208,14 @@ impl ScmActor {
         self.runtime.register_interest(session, project_id).await;
         let roots = self.roots_of(user_id, project_id).await?;
         let repositories = self.runtime.discover(project_id, &roots).await;
-        Ok(json!({ "repositories": repositories }))
+        let failures = self.runtime.discovery_failures(project_id).await;
+        let mut result = json!({ "repositories": repositories });
+        // Present only when a folder could not be opened, so the reply keeps its
+        // usual shape otherwise.
+        if !failures.is_empty() {
+            result["failures"] = serde_json::to_value(&failures).unwrap_or_else(|_| json!([]));
+        }
+        Ok(result)
     }
 
     /// Recompute a project's repositories after its attached folders changed, and
@@ -228,12 +235,12 @@ impl ScmActor {
                 return;
             }
         };
-        let (added, removed) = self.runtime.recompute_project(project_id, &roots).await;
+        let (added, removed, failures) = self.runtime.recompute_project(project_id, &roots).await;
         // An empty delta is not a change — do not wake clients for nothing.
-        if added.is_empty() && removed.is_empty() {
+        if added.is_empty() && removed.is_empty() && failures.is_none() {
             return;
         }
-        let frame = wire::repositories_changed(project_id, &added, &removed);
+        let frame = wire::repositories_changed(project_id, &added, &removed, failures.as_deref());
         for session in self.runtime.project_subscribers_of(project_id).await {
             self.push.push(&session, frame.clone());
         }

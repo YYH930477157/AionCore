@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::error::ScmError;
-use super::types::{ContentRef, ScmRepository};
+use super::types::{ContentRef, ScmDiscoveryFailure, ScmRepository};
 
 const JSONRPC_VERSION: &str = "2.0";
 
@@ -83,8 +83,20 @@ pub(super) fn notification(method: &str, params: Value) -> Value {
 /// `removed` carries only ids (there is nothing left to describe). Each is omitted
 /// when empty, and the caller does not emit the frame at all when both are — an
 /// empty change is not a change.
-pub(super) fn repositories_changed(project_id: &str, added: &[ScmRepository], removed: &[String]) -> Value {
+///
+/// `failures`, when present, is the project's complete current list of roots that
+/// could not be opened, replacing the previous one (empty clears it). It is sent
+/// only when that list changed, and such a change alone is worth a frame.
+pub(super) fn repositories_changed(
+    project_id: &str,
+    added: &[ScmRepository],
+    removed: &[String],
+    failures: Option<&[ScmDiscoveryFailure]>,
+) -> Value {
     let mut params = json!({ "project_id": project_id });
+    if let Some(failures) = failures {
+        params["failures"] = serde_json::to_value(failures).unwrap_or_else(|_| json!([]));
+    }
     if !added.is_empty() {
         // Infallible in practice (ScmRepository is a plain data struct); an empty
         // array on the impossible error keeps the frame well-formed rather than

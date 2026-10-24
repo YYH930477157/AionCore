@@ -31,7 +31,7 @@ use tokio::sync::{Mutex, RwLock};
 use super::error::ScmError;
 use super::git_provider::GitScmProvider;
 use super::provider::IScmProvider;
-use super::types::{FileRef, RepoRef, ResolvedRoot, ScmRepository, ScmStatus};
+use super::types::{FileRef, RepoRef, ResolvedRoot, ScmDiscoveryFailure, ScmRepository, ScmStatus};
 use super::watch::GitWatcher;
 
 /// Per-repository state. Thin by design (see module docs).
@@ -67,6 +67,9 @@ pub struct ScmRuntime {
     /// repositories were added or removed — by `repo_id`, never by path, since a
     /// case-insensitive filesystem makes path comparison unsound.
     project_repos: RwLock<HashMap<String, HashSet<String>>>,
+    /// The roots each project's latest discovery could not open, so the client can
+    /// say why a folder shows no repository instead of claiming it has none.
+    project_failures: RwLock<HashMap<String, Vec<ScmDiscoveryFailure>>>,
     /// Which connections have expressed interest in each project's repositories,
     /// by listing them. A project's `repositoriesChanged` frame fans out to these.
     /// Session-persistent: an entry is cleared only when the connection drops, not
@@ -87,6 +90,7 @@ impl ScmRuntime {
                 repos: RwLock::new(HashMap::new()),
                 locks: RwLock::new(HashMap::new()),
                 project_repos: RwLock::new(HashMap::new()),
+                project_failures: RwLock::new(HashMap::new()),
                 project_interest: RwLock::new(HashMap::new()),
             },
             dirty_rx,
@@ -98,9 +102,11 @@ impl ScmRuntime {
     /// Roots that are not repositories are simply absent from the result — never
     /// represented as an empty repository. Registers each discovered repository in
     /// the runtime and provider, but does not touch any project's tracked set;
-    /// that is the two project-aware callers' job.
-    async fn discover_roots(&self, roots: &[ResolvedRoot]) -> Vec<ScmRepository> {
+    /// that is the two project-aware callers' job. Roots that failed to open are
+    /// returned separately, with the reason.
+    async fn discover_roots(&self, roots: &[ResolvedRoot]) -> (Vec<ScmRepository>, Vec<ScmDiscoveryFailure>) {
         let mut found = Vec::new();
+        let mut failures = Vec::new();
         for root in roots {
             match self.provider.discover(root).await {
                 // A root may surface many repositories now (one-level workspace
@@ -134,26 +140,46 @@ impl ScmRuntime {
                 }
                 Err(err) => {
                     // One unreadable root must not hide the project's other
-                    // repositories.
+                    // repositories, nor be passed off as "no repository here".
                     tracing::warn!(pe_id = %root.pe_id, error = %err, "scm discover failed for root");
+                    failures.push(ScmDiscoveryFailure {
+                        pe_id: root.pe_id.clone(),
+                        label: root.label.clone(),
+                        path: root.absolute_path.clone(),
+                        message: err.to_string(),
+                    });
                 }
             }
         }
-        found
+        (found, failures)
     }
 
     /// Discover a project's repositories and record the result as the project's
     /// baseline, so a later roots recompute can diff against it.
     pub(super) async fn discover(&self, project_id: &str, roots: &[ResolvedRoot]) -> Vec<ScmRepository> {
-        let found = self.discover_roots(roots).await;
+        let (found, failures) = self.discover_roots(roots).await;
         let ids = found.iter().map(|r| r.repo_id.clone()).collect();
         self.project_repos.write().await.insert(project_id.to_owned(), ids);
+        self.project_failures
+            .write()
+            .await
+            .insert(project_id.to_owned(), failures);
         found
+    }
+
+    /// The roots the project's latest discovery could not open; empty when all opened.
+    pub(super) async fn discovery_failures(&self, project_id: &str) -> Vec<ScmDiscoveryFailure> {
+        self.project_failures
+            .read()
+            .await
+            .get(project_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Recompute a project's repositories after its attached-folder set changed,
     /// returning what was added (full descriptors) and removed (ids) against the
-    /// last known set.
+    /// last known set, plus the roots that failed to open when that set changed.
     ///
     /// Removed repositories are released here (watch dropped, state and provider
     /// entry forgotten): nothing else would, and a repository no project can reach
@@ -168,8 +194,8 @@ impl ScmRuntime {
         &self,
         project_id: &str,
         roots: &[ResolvedRoot],
-    ) -> (Vec<ScmRepository>, Vec<String>) {
-        let now = self.discover_roots(roots).await;
+    ) -> (Vec<ScmRepository>, Vec<String>, Option<Vec<ScmDiscoveryFailure>>) {
+        let (now, failures) = self.discover_roots(roots).await;
         let now_ids: HashSet<String> = now.iter().map(|r| r.repo_id.clone()).collect();
 
         let previous = self
@@ -186,7 +212,13 @@ impl ScmRuntime {
         for repo_id in &removed {
             self.release_repo(repo_id).await;
         }
-        (added, removed)
+        let previous_failures = self
+            .project_failures
+            .write()
+            .await
+            .insert(project_id.to_owned(), failures.clone())
+            .unwrap_or_default();
+        (added, removed, (previous_failures != failures).then_some(failures))
     }
 
     /// Release a repository that has left every project: drop its watch, its cached
