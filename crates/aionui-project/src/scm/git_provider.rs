@@ -8,6 +8,10 @@
 //! git2 handles are synchronous and not `Send`, so every repository access runs
 //! inside `spawn_blocking` and the handle never crosses an await point (the same
 //! shape the filename-search walk uses).
+//!
+//! An opt-in system-git backend serves the same operations through the `git`
+//! executable for machines whose file encryption hides repository content from
+//! aioncore (see [`git_cli`]).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -23,6 +27,9 @@ use super::types::{
     ContentRef, DiffContent, FileRef, RepoRef, ResolvedRoot, ScmActionFailure, ScmActionOutcome, ScmCapabilities,
     ScmHead, ScmRepository, ScmRepositoryState, ScmResource, ScmResourceState, ScmStatus,
 };
+
+#[path = "git_cli.rs"]
+mod git_cli;
 
 /// Cap on resources in one status result.
 ///
@@ -68,6 +75,9 @@ pub struct GitScmProvider {
     /// Where discarded untracked files go. Injectable so the "never delete
     /// outright" guarantee is testable; production always uses the platform trash.
     trash: Arc<dyn TrashSink>,
+    /// `Some` when repository data is read through the system `git` executable
+    /// instead of libgit2 (opt-in, see [`git_cli`]).
+    cli: Option<git_cli::GitCli>,
 }
 
 impl GitScmProvider {
@@ -79,9 +89,14 @@ impl GitScmProvider {
     /// takes no sink argument, so this exists for tests (and for a future
     /// platform override) without widening the public API.
     pub(super) fn with_trash(trash: Arc<dyn TrashSink>) -> Self {
+        Self::with_backend(trash, git_cli::GitCli::from_env())
+    }
+
+    fn with_backend(trash: Arc<dyn TrashSink>, cli: Option<git_cli::GitCli>) -> Self {
         Self {
             repos: std::sync::RwLock::new(HashMap::new()),
             trash,
+            cli,
         }
     }
 
@@ -127,6 +142,77 @@ impl GitScmProvider {
             .ok_or_else(|| ScmError::UnknownRepository {
                 repo_id: repo.repo_id.clone(),
             })
+    }
+
+    /// Register surfaced repositories and describe them for the outward model:
+    /// stable ids, worktree-to-primary links and the pe-root name.
+    fn register_discovered(&self, root: &ResolvedRoot, opened: Vec<OpenedRepo>) -> Vec<ScmRepository> {
+        // Index surfaced repositories by their common directory so a linked
+        // worktree can point at its primary repository when the primary is also
+        // in view. Keyed by canonicalized common dir: macOS reports symlinked and
+        // case-variant paths that only agree after realpath resolution (see
+        // `watch.rs`). A non-worktree's `path()` equals its `commondir()`, so this
+        // maps "primary common dir" → its repo_id.
+        let common_to_repo_id: HashMap<PathBuf, String> = opened
+            .iter()
+            .filter(|o| !o.is_worktree)
+            .map(|o| {
+                (
+                    canonical_key(&o.git_dir),
+                    Self::repo_id_for(&root.pe_id, &o.relative_path),
+                )
+            })
+            .collect();
+
+        let caps = self.capabilities();
+        let mut repos = Vec::with_capacity(opened.len());
+        for o in opened {
+            let repo_id = Self::repo_id_for(&root.pe_id, &o.relative_path);
+            let worktree_of = if o.is_worktree {
+                // Match by real git directory, never by path text: the primary's
+                // gitdir is this worktree's common dir.
+                common_to_repo_id.get(&canonical_key(&o.common_dir)).cloned()
+            } else {
+                None
+            };
+
+            self.repos.write().expect("scm repo registry poisoned").insert(
+                repo_id.clone(),
+                RepoEntry {
+                    workdir: o.workdir,
+                    git_dir: o.git_dir,
+                },
+            );
+
+            // A child repository is a repository found *inside* the pe root, not
+            // the pe root itself, so the entry's own name (`pe_name`) does not
+            // apply to it; only the pe root (relative_path == "") carries it.
+            let is_child = !o.relative_path.is_empty();
+            repos.push(ScmRepository {
+                repo_id,
+                provider_id: self.provider_id().to_owned(),
+                root: FileRef {
+                    pe_id: root.pe_id.clone(),
+                    relative_path: o.relative_path.clone(),
+                },
+                label: if is_child {
+                    o.relative_path.clone()
+                } else {
+                    root.label.clone()
+                },
+                // Passed through untouched for the pe root: identity resolution
+                // already decided whether the entry has a name of its own, and the
+                // provider must not second-guess it.
+                pe_name: if is_child { None } else { root.pe_name.clone() },
+                head: o.head,
+                is_worktree: o.is_worktree,
+                worktree_of,
+                capabilities: caps,
+                state: ScmRepositoryState::Idle,
+            });
+        }
+
+        repos
     }
 }
 
@@ -268,6 +354,15 @@ fn open_repo(path: &Path, relative_path: String) -> Result<Option<OpenedRepo>, g
 /// root yields an empty set rather than an error: an unreadable workspace root
 /// is "no repositories here", consistent with the not-a-repository outcome.
 fn discover_child_repos(root: &Path) -> Vec<OpenedRepo> {
+    discover_child_repos_with(root, open_repo)
+}
+
+/// The child walk behind [`discover_child_repos`], with the opener supplied so the
+/// system-git backend walks exactly the same candidates.
+fn discover_child_repos_with<E: std::fmt::Display>(
+    root: &Path,
+    open: impl Fn(&Path, String) -> Result<Option<OpenedRepo>, E>,
+) -> Vec<OpenedRepo> {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         Err(err) => {
@@ -298,7 +393,7 @@ fn discover_child_repos(root: &Path) -> Vec<OpenedRepo> {
                 continue;
             }
         }
-        match open_repo(&entry.path(), name.to_owned()) {
+        match open(&entry.path(), name.to_owned()) {
             Ok(Some(opened)) => repos.push(opened),
             Ok(None) => {}
             Err(err) => {
@@ -909,6 +1004,21 @@ where
     })?
 }
 
+/// Run one system-git operation on a blocking thread: git is a child process, and
+/// waiting for it must not stall the async runtime.
+async fn with_git<T, F>(cli: git_cli::GitCli, workdir: PathBuf, context: &'static str, f: F) -> Result<T, ScmError>
+where
+    T: Send + 'static,
+    F: FnOnce(&git_cli::GitCli, &Path) -> Result<T, ScmError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || f(&cli, &workdir))
+        .await
+        .map_err(|err| ScmError::OperationFailed {
+            context,
+            message: format!("blocking task failed: {err}"),
+        })?
+}
+
 /// Validate the requested anchors against this provider's capabilities.
 ///
 /// git has a staging area, so `Staged` is always allowed here; the check exists
@@ -947,6 +1057,15 @@ impl IScmProvider for GitScmProvider {
         // reading one level of child directories and opening each. The closure
         // returns just the plain data each surfaced repository needs; identity
         // and registry insertion stay on the async side.
+        if let Some(cli) = self.cli.clone() {
+            let opened = tokio::task::spawn_blocking(move || cli.discover(&root_path, discover_children))
+                .await
+                .map_err(|err| ScmError::OperationFailed {
+                    context: "discover",
+                    message: format!("blocking task failed: {err}"),
+                })??;
+            return Ok(self.register_discovered(root, opened));
+        }
         let opened = tokio::task::spawn_blocking(move || -> Result<Vec<OpenedRepo>, git2::Error> {
             let pe_root_key = canonical_key(&root_path);
 
@@ -991,72 +1110,7 @@ impl IScmProvider for GitScmProvider {
         })?
         .map_err(|e| engine_error("discover", &e))?;
 
-        // Index surfaced repositories by their common directory so a linked
-        // worktree can point at its primary repository when the primary is also
-        // in view. Keyed by canonicalized common dir: macOS reports symlinked and
-        // case-variant paths that only agree after realpath resolution (see
-        // `watch.rs`). A non-worktree's `path()` equals its `commondir()`, so this
-        // maps "primary common dir" → its repo_id.
-        let common_to_repo_id: HashMap<PathBuf, String> = opened
-            .iter()
-            .filter(|o| !o.is_worktree)
-            .map(|o| {
-                (
-                    canonical_key(&o.git_dir),
-                    Self::repo_id_for(&root.pe_id, &o.relative_path),
-                )
-            })
-            .collect();
-
-        let caps = self.capabilities();
-        let mut repos = Vec::with_capacity(opened.len());
-        for o in opened {
-            let repo_id = Self::repo_id_for(&root.pe_id, &o.relative_path);
-            let worktree_of = if o.is_worktree {
-                // Match by real git directory, never by path text: the primary's
-                // gitdir is this worktree's common dir.
-                common_to_repo_id.get(&canonical_key(&o.common_dir)).cloned()
-            } else {
-                None
-            };
-
-            self.repos.write().expect("scm repo registry poisoned").insert(
-                repo_id.clone(),
-                RepoEntry {
-                    workdir: o.workdir,
-                    git_dir: o.git_dir,
-                },
-            );
-
-            // A child repository is a repository found *inside* the pe root, not
-            // the pe root itself, so the entry's own name (`pe_name`) does not
-            // apply to it; only the pe root (relative_path == "") carries it.
-            let is_child = !o.relative_path.is_empty();
-            repos.push(ScmRepository {
-                repo_id,
-                provider_id: self.provider_id().to_owned(),
-                root: FileRef {
-                    pe_id: root.pe_id.clone(),
-                    relative_path: o.relative_path.clone(),
-                },
-                label: if is_child {
-                    o.relative_path.clone()
-                } else {
-                    root.label.clone()
-                },
-                // Passed through untouched for the pe root: identity resolution
-                // already decided whether the entry has a name of its own, and the
-                // provider must not second-guess it.
-                pe_name: if is_child { None } else { root.pe_name.clone() },
-                head: o.head,
-                is_worktree: o.is_worktree,
-                worktree_of,
-                capabilities: caps,
-                state: ScmRepositoryState::Idle,
-            });
-        }
-
-        Ok(repos)
+        Ok(self.register_discovered(root, opened))
     }
 
     async fn status(&self, repo: &RepoRef) -> Result<ScmStatus, ScmError> {
@@ -1065,7 +1119,10 @@ impl IScmProvider for GitScmProvider {
         // repository-relative paths, and pe identity comes from the resolved root,
         // so the orchestration layer owns it (`formal/runtime/source-control.md`).
         // Resources therefore carry an empty `pe_id` until that layer fills it.
-        let (resources, truncated, degraded, head) = with_repo(entry.workdir, "status", collect_status).await?;
+        let (resources, truncated, degraded, head) = match self.cli.clone() {
+            Some(cli) => with_git(cli, entry.workdir, "status", |git, dir| git.status(dir)).await?,
+            None => with_repo(entry.workdir, "status", collect_status).await?,
+        };
 
         if truncated {
             tracing::info!(
@@ -1098,6 +1155,12 @@ impl IScmProvider for GitScmProvider {
         check_anchor(self.capabilities(), to)?;
         let entry = self.entry(repo)?;
         let rel = file.relative_path.clone();
+        if let Some(cli) = self.cli.clone() {
+            return with_git(cli, entry.workdir, "diff", move |git, dir| {
+                git.diff(dir, &rel, from, to)
+            })
+            .await;
+        }
         with_repo(entry.workdir, "diff", move |r| diff_between(r, &rel, from, to)).await
     }
 
@@ -1105,6 +1168,12 @@ impl IScmProvider for GitScmProvider {
         check_anchor(self.capabilities(), at)?;
         let entry = self.entry(repo)?;
         let rel = file.relative_path.clone();
+        if let Some(cli) = self.cli.clone() {
+            return with_git(cli, entry.workdir, "original", move |git, dir| {
+                git.original(dir, &rel, at)
+            })
+            .await;
+        }
         with_repo(entry.workdir, "original", move |r| read_at(r, &rel, at)).await
     }
 
@@ -1112,7 +1181,15 @@ impl IScmProvider for GitScmProvider {
         let entry = self.entry(repo)?;
         let rels: Vec<String> = files.iter().map(|f| f.relative_path.clone()).collect();
         let trash = Arc::clone(&self.trash);
-        let failed = with_repo(entry.workdir, "revert", move |r| revert_paths(r, &rels, trash.as_ref())).await?;
+        let failed = match self.cli.clone() {
+            Some(cli) => {
+                with_git(cli, entry.workdir, "revert", move |git, dir| {
+                    git.revert(dir, &rels, trash.as_ref())
+                })
+                .await?
+            }
+            None => with_repo(entry.workdir, "revert", move |r| revert_paths(r, &rels, trash.as_ref())).await?,
+        };
         outcome_of(files, failed)
     }
 
@@ -1126,6 +1203,10 @@ impl IScmStaging for GitScmProvider {
     async fn stage(&self, repo: &RepoRef, files: &[FileRef]) -> Result<ScmActionOutcome, ScmError> {
         let entry = self.entry(repo)?;
         let rels: Vec<String> = files.iter().map(|f| f.relative_path.clone()).collect();
+        if let Some(cli) = self.cli.clone() {
+            let failed = with_git(cli, entry.workdir, "stage", move |git, dir| git.stage(dir, &rels)).await?;
+            return outcome_of(files, failed);
+        }
 
         let failed = with_repo(entry.workdir, "stage", move |r| {
             let mut index = r.index().map_err(|e| engine_error("stage", &e))?;
@@ -1167,6 +1248,10 @@ impl IScmStaging for GitScmProvider {
     async fn unstage(&self, repo: &RepoRef, files: &[FileRef]) -> Result<ScmActionOutcome, ScmError> {
         let entry = self.entry(repo)?;
         let rels: Vec<String> = files.iter().map(|f| f.relative_path.clone()).collect();
+        if let Some(cli) = self.cli.clone() {
+            let failed = with_git(cli, entry.workdir, "unstage", move |git, dir| git.unstage(dir, &rels)).await?;
+            return outcome_of(files, failed);
+        }
 
         let failed = with_repo(entry.workdir, "unstage", move |r| {
             // Same pre-check as stage and discard: a conflicted selection is
