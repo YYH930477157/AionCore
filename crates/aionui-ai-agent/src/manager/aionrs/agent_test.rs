@@ -30,6 +30,7 @@ fn make_test_config() -> AionrsResolvedConfig {
         base_url: None,
         system_prompt: None,
         max_tokens: None,
+        context_window: None,
         max_turns: None,
         max_tool_call_malformed_turns: None,
         max_tool_call_failure_turns: None,
@@ -342,4 +343,29 @@ async fn runtime_can_emit_error_and_finish() {
         AgentStreamEvent::Finish(_) => {}
         other => panic!("Expected Finish, got {:?}", other),
     }
+}
+
+#[test]
+fn context_window_scales_compaction_buffers_for_a_smaller_model() {
+    let mut compact = CompactConfig::default();
+    apply_context_window(&mut compact, 32_000);
+
+    assert_eq!(compact.context_window, 32_000);
+    assert_eq!(compact.output_reserve, 3_200);
+    assert_eq!(compact.autocompact_buffer, 2_080);
+    assert_eq!(compact.emergency_buffer, 480);
+    assert!(!aion_agent::compact::auto::should_autocompact(20_000, &compact));
+    assert!(aion_agent::compact::auto::should_autocompact(26_720, &compact));
+}
+
+#[test]
+fn context_window_keeps_absolute_buffers_for_a_larger_model() {
+    let defaults = CompactConfig::default();
+    let mut compact = CompactConfig::default();
+    apply_context_window(&mut compact, 1_000_000);
+
+    assert_eq!(compact.context_window, 1_000_000);
+    assert_eq!(compact.output_reserve, defaults.output_reserve);
+    assert_eq!(compact.autocompact_buffer, defaults.autocompact_buffer);
+    assert_eq!(compact.emergency_buffer, defaults.emergency_buffer);
 }

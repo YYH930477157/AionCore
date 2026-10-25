@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use aionui_api_types::ModelInfo;
 use serde::Deserialize;
+use serde_json::{Map, Value};
 use tracing::warn;
 
 use crate::error::SystemError;
@@ -10,19 +12,42 @@ use super::FetchConfig;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Smallest reported context window that is taken at face value.
+const MIN_CONTEXT_LIMIT: u64 = 1_024;
+
+/// Models plus the context windows the remote API reported for them.
+#[derive(Debug, Default)]
+pub(crate) struct FetchedModels {
+    pub models: Vec<ModelInfo>,
+    pub context_limits: HashMap<String, u64>,
+}
+
+impl From<Vec<ModelInfo>> for FetchedModels {
+    fn from(models: Vec<ModelInfo>) -> Self {
+        Self {
+            models,
+            context_limits: HashMap::new(),
+        }
+    }
+}
+
 /// Dispatch to the appropriate platform-specific fetcher.
 pub(crate) async fn fetch_for_platform(
     client: &reqwest::Client,
     config: &FetchConfig,
-) -> Result<Vec<ModelInfo>, SystemError> {
+) -> Result<FetchedModels, SystemError> {
     match config.platform.as_str() {
-        "anthropic" | "claude" => fetch_anthropic(client, &config.base_url, &config.api_key).await,
+        "anthropic" | "claude" => fetch_anthropic(client, &config.base_url, &config.api_key)
+            .await
+            .map(Into::into),
         "gemini" => fetch_gemini(client, &config.base_url, &config.api_key).await,
-        "bedrock" => fetch_bedrock(config).await,
-        "vertex-ai" => Ok(vertex_ai_models()),
+        "bedrock" => fetch_bedrock(config).await.map(Into::into),
+        "vertex-ai" => Ok(vertex_ai_models().into()),
         "new-api" => fetch_new_api(client, &config.base_url, &config.api_key).await,
-        "minimax" => Ok(minimax_models()),
-        "dashscope-coding" => fetch_dashscope_coding(client, &config.base_url, &config.api_key).await,
+        "minimax" => Ok(minimax_models().into()),
+        "dashscope-coding" => fetch_dashscope_coding(client, &config.base_url, &config.api_key)
+            .await
+            .map(Into::into),
         _ => fetch_openai_compatible(client, &config.base_url, &config.api_key).await,
     }
 }
@@ -40,6 +65,39 @@ struct OpenAiModelsResponse {
 #[derive(Deserialize)]
 struct OpenAiModel {
     id: String,
+    #[serde(flatten)]
+    extra: Map<String, Value>,
+}
+
+/// Fields that OpenAI-compatible gateways use for a model's context window:
+/// OpenRouter and Together (`context_length`), vLLM and SGLang
+/// (`max_model_len`), Groq (`context_window`), Mistral (`max_context_length`).
+const OPENAI_CONTEXT_FIELDS: &[&str] = &[
+    "context_length",
+    "max_model_len",
+    "context_window",
+    "max_context_length",
+];
+
+fn reported_context_limit(fields: &Map<String, Value>) -> Option<u64> {
+    OPENAI_CONTEXT_FIELDS
+        .iter()
+        .find_map(|key| fields.get(*key).and_then(token_count))
+}
+
+/// Read a positive whole token count given as a JSON number or numeric string.
+fn token_count(value: &Value) -> Option<u64> {
+    let count = match value {
+        Value::Number(number) => number.as_u64().or_else(|| {
+            number
+                .as_f64()
+                .filter(|f| f.fract() == 0.0 && *f > 0.0)
+                .map(|f| f as u64)
+        }),
+        Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }?;
+    (count >= MIN_CONTEXT_LIMIT).then_some(count)
 }
 
 /// Fetch models from an OpenAI-compatible `/models` endpoint.
@@ -47,7 +105,7 @@ pub(super) async fn fetch_openai_compatible(
     client: &reqwest::Client,
     base_url: &str,
     api_key: &str,
-) -> Result<Vec<ModelInfo>, SystemError> {
+) -> Result<FetchedModels, SystemError> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
     let resp = client
         .get(&url)
@@ -64,7 +122,14 @@ pub(super) async fn fetch_openai_compatible(
         .await
         .map_err(|e| SystemError::BadGateway(format!("Failed to parse models response: {e}")))?;
 
-    Ok(body.data.into_iter().map(|m| ModelInfo::Id(m.id)).collect())
+    let mut fetched = FetchedModels::default();
+    for model in body.data {
+        if let Some(limit) = reported_context_limit(&model.extra) {
+            fetched.context_limits.insert(model.id.clone(), limit);
+        }
+        fetched.models.push(ModelInfo::Id(model.id));
+    }
+    Ok(fetched)
 }
 
 // ---------------------------------------------------------------------------
@@ -136,11 +201,13 @@ struct GeminiModelsResponse {
 #[derive(Deserialize)]
 struct GeminiModel {
     name: String,
+    #[serde(default, rename = "inputTokenLimit")]
+    input_token_limit: Option<Value>,
 }
 
 const GEMINI_FALLBACK_MODELS: &[&str] = &["gemini-2.5-pro", "gemini-2.5-flash"];
 
-async fn fetch_gemini(client: &reqwest::Client, base_url: &str, api_key: &str) -> Result<Vec<ModelInfo>, SystemError> {
+async fn fetch_gemini(client: &reqwest::Client, base_url: &str, api_key: &str) -> Result<FetchedModels, SystemError> {
     let url = format!("{}/v1beta/models?key={api_key}", base_url.trim_end_matches('/'));
     let result = client.get(&url).timeout(REQUEST_TIMEOUT).send().await;
 
@@ -150,27 +217,27 @@ async fn fetch_gemini(client: &reqwest::Client, base_url: &str, api_key: &str) -
                 .json()
                 .await
                 .map_err(|e| SystemError::BadGateway(format!("Failed to parse Gemini response: {e}")))?;
-            let models = body
-                .models
-                .into_iter()
-                .map(|m| {
-                    // Strip "models/" prefix: "models/gemini-2.5-pro" -> "gemini-2.5-pro"
-                    let id = m.name.strip_prefix("models/").unwrap_or(&m.name).to_owned();
-                    ModelInfo::Id(id)
-                })
-                .collect();
-            Ok(models)
+            let mut fetched = FetchedModels::default();
+            for model in body.models {
+                // Strip "models/" prefix: "models/gemini-2.5-pro" -> "gemini-2.5-pro"
+                let id = model.name.strip_prefix("models/").unwrap_or(&model.name).to_owned();
+                if let Some(limit) = model.input_token_limit.as_ref().and_then(token_count) {
+                    fetched.context_limits.insert(id.clone(), limit);
+                }
+                fetched.models.push(ModelInfo::Id(id));
+            }
+            Ok(fetched)
         }
         Ok(resp) => {
             warn!(
                 status = %resp.status(),
                 "Gemini models API failed, using fallback list"
             );
-            Ok(fallback_models(GEMINI_FALLBACK_MODELS))
+            Ok(fallback_models(GEMINI_FALLBACK_MODELS).into())
         }
         Err(e) => {
             warn!(error = %e, "Gemini models API unreachable, using fallback list");
-            Ok(fallback_models(GEMINI_FALLBACK_MODELS))
+            Ok(fallback_models(GEMINI_FALLBACK_MODELS).into())
         }
     }
 }
@@ -260,7 +327,7 @@ fn minimax_models() -> Vec<ModelInfo> {
 // new-api (OpenAI-compatible with /v1 enforcement)
 // ---------------------------------------------------------------------------
 
-async fn fetch_new_api(client: &reqwest::Client, base_url: &str, api_key: &str) -> Result<Vec<ModelInfo>, SystemError> {
+async fn fetch_new_api(client: &reqwest::Client, base_url: &str, api_key: &str) -> Result<FetchedModels, SystemError> {
     let normalized = ensure_v1_path(base_url);
     fetch_openai_compatible(client, &normalized, api_key).await
 }
@@ -366,6 +433,69 @@ mod tests {
         assert_eq!(
             ensure_v1_path("https://api.example.com/v1/"),
             "https://api.example.com/v1"
+        );
+    }
+
+    fn fields(value: Value) -> Map<String, Value> {
+        value.as_object().cloned().unwrap()
+    }
+
+    #[test]
+    fn reported_context_limit_reads_known_gateway_fields() {
+        let cases = [
+            ("context_length", 131_072),
+            ("max_model_len", 32_768),
+            ("context_window", 8_192),
+            ("max_context_length", 128_000),
+        ];
+        for (key, limit) in cases {
+            let mut map = Map::new();
+            map.insert(key.to_owned(), Value::from(limit));
+            assert_eq!(reported_context_limit(&map), Some(limit), "{key}");
+        }
+    }
+
+    #[test]
+    fn reported_context_limit_accepts_numeric_strings_and_whole_floats() {
+        assert_eq!(
+            reported_context_limit(&fields(serde_json::json!({"context_length": "65536"}))),
+            Some(65_536)
+        );
+        assert_eq!(
+            reported_context_limit(&fields(serde_json::json!({"max_model_len": 40960.0}))),
+            Some(40_960)
+        );
+    }
+
+    #[test]
+    fn reported_context_limit_ignores_missing_and_implausible_values() {
+        assert_eq!(
+            reported_context_limit(&fields(serde_json::json!({"object": "model"}))),
+            None
+        );
+        assert_eq!(
+            reported_context_limit(&fields(serde_json::json!({"context_length": 0}))),
+            None
+        );
+        assert_eq!(
+            reported_context_limit(&fields(serde_json::json!({"context_length": -1}))),
+            None
+        );
+        assert_eq!(
+            reported_context_limit(&fields(serde_json::json!({"context_length": 512}))),
+            None
+        );
+        assert_eq!(
+            reported_context_limit(&fields(serde_json::json!({"context_length": 1.5e3}))),
+            Some(1_500)
+        );
+        assert_eq!(
+            reported_context_limit(&fields(serde_json::json!({"context_length": "lots"}))),
+            None
+        );
+        assert_eq!(
+            reported_context_limit(&fields(serde_json::json!({"context_length": null}))),
+            None
         );
     }
 

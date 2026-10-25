@@ -3,7 +3,7 @@ use aion_types::message::ImageInputCapability;
 
 use crate::capability::image_input::resolve_image_input_capability;
 
-use super::{resolve_aionrs_url_and_compat_with_mode, resolve_model_compat_overrides};
+use super::{resolve_aionrs_url_and_compat_with_mode, resolve_context_window, resolve_model_compat_overrides};
 
 #[test]
 fn model_settings_resolve_explicit_vision_and_api_overrides() {
@@ -12,7 +12,8 @@ fn model_settings_resolve_explicit_vision_and_api_overrides() {
         r#"{
             "gpt-5.6-sol": {
                 "image_input": "supported",
-                "openai_api_mode": "chat_completions"
+                "openai_api_mode": "chat_completions",
+                "context_limit": 131072
             }
         }"#,
     )
@@ -20,6 +21,7 @@ fn model_settings_resolve_explicit_vision_and_api_overrides() {
 
     assert_eq!(overrides.image_input, Some(ImageInputCapability::Supported));
     assert_eq!(overrides.openai_api_mode, Some(OpenAiApiMode::ChatCompletions));
+    assert_eq!(overrides.context_limit, Some(131_072));
 }
 
 #[test]
@@ -28,6 +30,21 @@ fn missing_model_settings_keep_vision_and_api_automatic() {
 
     assert_eq!(overrides.image_input, None);
     assert_eq!(overrides.openai_api_mode, None);
+    assert_eq!(overrides.context_limit, None);
+}
+
+#[test]
+fn context_window_prefers_the_model_setting_over_the_provider_limit() {
+    assert_eq!(resolve_context_window(Some(32_768), Some(128_000)), Some(32_768));
+    assert_eq!(resolve_context_window(None, Some(128_000)), Some(128_000));
+    assert_eq!(resolve_context_window(None, None), None);
+}
+
+#[test]
+fn context_window_treats_non_positive_values_as_unset() {
+    assert_eq!(resolve_context_window(Some(0), Some(64_000)), Some(64_000));
+    assert_eq!(resolve_context_window(None, Some(0)), None);
+    assert_eq!(resolve_context_window(None, Some(-1)), None);
 }
 
 #[test]

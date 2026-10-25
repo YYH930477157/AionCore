@@ -1,11 +1,11 @@
-use aionui_api_types::{FetchModelsResponse, ModelInfo};
+use aionui_api_types::FetchModelsResponse;
 use tokio::task::JoinSet;
 use tracing::debug;
 
 use crate::error::SystemError;
 
 use super::FetchConfig;
-use super::fetchers::fetch_openai_compatible;
+use super::fetchers::{FetchedModels, fetch_openai_compatible};
 
 /// URL path suffixes to probe when auto-fixing.
 const URL_VARIANTS: &[&str] = &[
@@ -39,18 +39,19 @@ pub(crate) async fn try_fix_url(
         let client = client.clone();
         let api_key = config.api_key.clone();
         set.spawn(async move {
-            let models = fetch_openai_compatible(&client, &candidate, &api_key).await?;
-            Ok::<(Vec<ModelInfo>, String), SystemError>((models, candidate))
+            let fetched = fetch_openai_compatible(&client, &candidate, &api_key).await?;
+            Ok::<(FetchedModels, String), SystemError>((fetched, candidate))
         });
     }
 
     while let Some(result) = set.join_next().await {
-        if let Ok(Ok((models, fixed_url))) = result {
+        if let Ok(Ok((fetched, fixed_url))) = result {
             set.abort_all();
             debug!(fixed_url = %fixed_url, "URL auto-fix succeeded");
             return Ok(FetchModelsResponse {
-                models,
+                models: fetched.models,
                 fixed_base_url: Some(fixed_url),
+                context_limits: fetched.context_limits,
             });
         }
     }

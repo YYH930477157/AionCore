@@ -184,6 +184,37 @@ async fn fetch_models_openai_compatible_success() {
     assert_eq!(models.len(), 2);
     assert_eq!(models[0], "gpt-4o");
     assert_eq!(models[1], "gpt-4o-mini");
+    assert!(json["data"].get("context_limits").is_none());
+}
+
+#[tokio::test]
+async fn fetch_models_openai_compatible_reports_gateway_context_limits() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [
+                {"id": "qwen3-32b", "object": "model", "max_model_len": 40960},
+                {"id": "router/model", "object": "model", "context_length": 131072},
+                {"id": "plain", "object": "model"}
+            ]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let (router, db) = setup().await;
+    let id = create_provider(&db, "openai", &mock_server.uri(), "test-api-key").await;
+
+    let req = post_request(&format!("/api/providers/{id}/models"), json!({"try_fix": false}));
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = body_json(resp).await;
+    assert_eq!(json["data"]["models"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        json["data"]["context_limits"],
+        json!({"qwen3-32b": 40960, "router/model": 131072})
+    );
 }
 
 #[tokio::test]
@@ -293,7 +324,7 @@ async fn fetch_models_gemini_success() {
         .and(path("/v1beta/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "models": [
-                {"name": "models/gemini-2.5-pro", "displayName": "Gemini 2.5 Pro"},
+                {"name": "models/gemini-2.5-pro", "displayName": "Gemini 2.5 Pro", "inputTokenLimit": 1048576},
                 {"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash"}
             ]
         })))
@@ -313,6 +344,7 @@ async fn fetch_models_gemini_success() {
     // models/ prefix should be stripped
     assert_eq!(models[0], "gemini-2.5-pro");
     assert_eq!(models[1], "gemini-2.5-flash");
+    assert_eq!(json["data"]["context_limits"], json!({"gemini-2.5-pro": 1048576}));
 }
 
 #[tokio::test]

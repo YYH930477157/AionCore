@@ -94,6 +94,7 @@ impl ProviderHealthCheckService {
             base_url,
             system_prompt: Some("You are a provider health probe. Reply with exactly OK and do not use tools.".into()),
             max_tokens: Some(HEALTH_CHECK_MAX_TOKENS),
+            context_window: None,
             max_turns: Some(1),
             max_tool_call_malformed_turns: Some(1),
             max_tool_call_failure_turns: Some(1),

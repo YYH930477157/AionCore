@@ -54,6 +54,9 @@ pub struct ModelSettings {
     pub image_input: Option<ModelImageInputCapability>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openai_api_mode: Option<ModelOpenAiApiMode>,
+    /// Context window in tokens. Overrides the provider-wide `context_limit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<u64>,
 }
 
 /// Health status values for a model.
@@ -275,6 +278,9 @@ pub struct FetchModelsResponse {
     pub models: Vec<ModelInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fixed_base_url: Option<String>,
+    /// Context windows the remote API reported, keyed by model id.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub context_limits: HashMap<String, u64>,
 }
 
 /// Request body for `POST /api/providers/detect-protocol`.
@@ -784,10 +790,12 @@ mod tests {
                 ModelInfo::Id("claude-opus-4-20250514".into()),
             ],
             fixed_base_url: None,
+            context_limits: HashMap::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["models"].as_array().unwrap().len(), 2);
         assert!(json.get("fixed_base_url").is_none());
+        assert!(json.get("context_limits").is_none());
     }
 
     #[test]
@@ -795,9 +803,37 @@ mod tests {
         let resp = FetchModelsResponse {
             models: vec![ModelInfo::Id("gpt-4".into())],
             fixed_base_url: Some("https://api.openai.com/v1".into()),
+            context_limits: HashMap::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["fixed_base_url"], "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_fetch_models_response_with_context_limits() {
+        let resp = FetchModelsResponse {
+            models: vec![ModelInfo::Id("qwen3-32b".into())],
+            fixed_base_url: None,
+            context_limits: HashMap::from([("qwen3-32b".to_owned(), 32_768)]),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["context_limits"]["qwen3-32b"], 32_768);
+    }
+
+    #[test]
+    fn test_model_settings_context_limit_round_trip() {
+        let settings: ModelSettings = serde_json::from_value(json!({"context_limit": 131_072})).unwrap();
+        assert_eq!(settings.context_limit, Some(131_072));
+        assert_eq!(
+            serde_json::to_value(&settings).unwrap(),
+            json!({"context_limit": 131_072})
+        );
+        assert!(
+            serde_json::to_value(ModelSettings::default())
+                .unwrap()
+                .get("context_limit")
+                .is_none()
+        );
     }
 
     // -- DetectProtocolRequest --

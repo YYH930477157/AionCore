@@ -78,9 +78,10 @@ impl ModelFetchService {
     /// entry points.
     async fn fetch_with_config(&self, config: &FetchConfig, try_fix: bool) -> Result<FetchModelsResponse, SystemError> {
         match fetchers::fetch_for_platform(&self.http_client, config).await {
-            Ok(models) => Ok(FetchModelsResponse {
-                models,
+            Ok(fetched) => Ok(FetchModelsResponse {
+                models: fetched.models,
                 fixed_base_url: None,
+                context_limits: fetched.context_limits,
             }),
             Err(err) if try_fix && supports_url_fix(&config.platform) => {
                 url_fixer::try_fix_url(&self.http_client, config).await.map_err(|_| err)

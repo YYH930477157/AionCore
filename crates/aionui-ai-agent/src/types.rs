@@ -143,6 +143,9 @@ pub struct AionrsResolvedConfig {
     /// Internal response cap for specialized flows such as provider health probes.
     /// Normal AionUi conversations leave this unset.
     pub max_tokens: Option<u32>,
+    /// Model context window in tokens from the provider settings. When unset,
+    /// aionrs keeps its configured or default window.
+    pub context_window: Option<u64>,
     /// Max agentic turns.
     pub max_turns: Option<usize>,
     /// Max repeated malformed tool-call turns before stopping.

@@ -9,6 +9,7 @@ use aion_agent::bootstrap::AgentBootstrap;
 use aion_agent::engine::AgentEngine;
 use aion_agent::output::OutputSink;
 use aion_agent::session::Session;
+use aion_config::compact::CompactConfig;
 use aion_config::compat::ProviderCompat;
 use aion_config::config::{CliArgs, Config, McpServerConfig, ProviderType};
 use aion_mcp::manager::McpManager;
@@ -56,6 +57,21 @@ fn resolve_aionui_config(cli_args: &CliArgs) -> Result<Config, AgentError> {
     config.compat.transport.model_max_tokens = default_transport.model_max_tokens;
 
     Ok(config)
+}
+
+/// Size compaction for the model's context window. A window smaller than the
+/// configured one shrinks the reserve and buffers by the same ratio, so a small
+/// model keeps the same headroom instead of compacting on every turn.
+fn apply_context_window(compact: &mut CompactConfig, window: u64) {
+    let window = usize::try_from(window).unwrap_or(usize::MAX);
+    let configured = compact.context_window;
+    if window < configured {
+        let scale = |tokens: usize| (tokens as u128 * window as u128 / configured as u128) as usize;
+        compact.output_reserve = scale(compact.output_reserve);
+        compact.autocompact_buffer = scale(compact.autocompact_buffer);
+        compact.emergency_buffer = scale(compact.emergency_buffer);
+    }
+    compact.context_window = window;
 }
 
 #[derive(Clone, Debug)]
@@ -201,6 +217,9 @@ impl AionrsAgentManager {
         config.session.enabled = true;
         config.session.directory = config_extra.session_directory.to_string_lossy().into_owned();
         config.compat.image_input = Some(image_input_capability);
+        if let Some(window) = config_extra.context_window {
+            apply_context_window(&mut config.compact, window);
+        }
 
         if let Some(mode) = config_extra.compat_overrides.openai_api_mode {
             config.compat.transport.openai_api_mode = Some(mode);

@@ -143,6 +143,7 @@ pub(super) async fn build(
 
     let provider = map_aionrs_provider(&row.platform, &model_id, row.model_protocols.as_deref())?;
     let model_overrides = resolve_model_compat_overrides(&model_id, &row.model_settings)?;
+    let context_window = resolve_context_window(model_overrides.context_limit, row.context_limit);
 
     let (base_url, mut compat_overrides) = resolve_aionrs_url_and_compat_with_mode(
         &row.platform,
@@ -189,6 +190,7 @@ pub(super) async fn build(
         base_url,
         system_prompt: overrides.system_prompt,
         max_tokens: None,
+        context_window,
         max_turns: overrides.max_turns,
         max_tool_call_malformed_turns: overrides.max_tool_call_malformed_turns,
         max_tool_call_failure_turns: overrides.max_tool_call_failure_turns,
@@ -490,6 +492,17 @@ fn rewrite_openai_api_url(url: &str, mode: OpenAiApiMode) -> Option<String> {
 pub(crate) struct ModelCompatOverrides {
     pub(crate) image_input: Option<ImageInputCapability>,
     pub(crate) openai_api_mode: Option<OpenAiApiMode>,
+    pub(crate) context_limit: Option<u64>,
+}
+
+/// Pick the context window for a model: its own setting first, then the
+/// provider-wide limit. Non-positive values count as unset.
+pub(crate) fn resolve_context_window(model_limit: Option<u64>, provider_limit: Option<i64>) -> Option<u64> {
+    model_limit.filter(|limit| *limit > 0).or_else(|| {
+        provider_limit
+            .and_then(|limit| u64::try_from(limit).ok())
+            .filter(|limit| *limit > 0)
+    })
 }
 
 pub(crate) fn resolve_model_compat_overrides(
@@ -512,6 +525,7 @@ pub(crate) fn resolve_model_compat_overrides(
             ModelOpenAiApiMode::ChatCompletions => OpenAiApiMode::ChatCompletions,
             ModelOpenAiApiMode::Responses => OpenAiApiMode::Responses,
         }),
+        context_limit: settings.context_limit,
     })
 }
 
