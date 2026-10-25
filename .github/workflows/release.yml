@@ -1,9 +1,9 @@
 name: Release
 
+# Fork: releases are built on our own host with scripts/remote-release.sh, so a
+# tag push no longer starts this workflow. Dispatch it manually when a release
+# needs the full platform matrix (macOS, ARM).
 on:
-  push:
-    tags:
-      - "v*"
   workflow_call:
     inputs:
       tag_name:
