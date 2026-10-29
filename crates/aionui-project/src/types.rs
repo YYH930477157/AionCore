@@ -87,6 +87,8 @@ pub struct ProjectDetail {
     pub explorer: ProjectExplorerView,
     pub created_at: TimestampMs,
     pub updated_at: TimestampMs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<aionui_api_types::WorkspaceState>,
 }
 
 /// Attach an additional (non-workspace) folder to a project.
@@ -125,6 +127,12 @@ pub struct ResolvedResource {
 /// rather than relying on message parsing.
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
+    #[error("workspace is being used by an active task: {project_id}")]
+    WorkspaceBusy { project_id: String },
+    #[error("invalid workspace: {reason}")]
+    InvalidWorkspace { reason: String },
+    #[error("workspace configuration could not be read or written")]
+    WorkspaceIo,
     #[error("folder not found: {path}")]
     FolderNotFound { path: String },
 
@@ -190,6 +198,9 @@ impl ProjectError {
     /// Stable, UI-consumable error code.
     pub fn code(&self) -> &'static str {
         match self {
+            ProjectError::WorkspaceBusy { .. } => "project_workspace_busy",
+            ProjectError::InvalidWorkspace { .. } => "invalid_workspace",
+            ProjectError::WorkspaceIo => "workspace_io_error",
             ProjectError::FolderNotFound { .. } => "folder_not_found",
             ProjectError::FolderNotDirectory { .. } => "folder_not_directory",
             ProjectError::FolderPermissionDenied { .. } => "folder_permission_denied",

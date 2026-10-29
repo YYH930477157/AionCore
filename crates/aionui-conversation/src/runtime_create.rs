@@ -200,6 +200,11 @@ impl ConversationService {
             });
         }
 
+        let managed_workspace = self
+            .conversation_workspace(&caller)
+            .await
+            .map_err(ConversationCreateError::transport)?
+            .is_some();
         // 4. workspace — absolute-ness here, existence inside `create`.
         let (workspace, workspace_inherited) = match req
             .workspace
@@ -218,9 +223,15 @@ impl ConversationService {
             None => (
                 // `create` always persists `extra.workspace`, so a caller
                 // without one is a broken row, not a user error.
-                workspace_from_extra(&caller.extra).ok_or_else(|| ConversationCreateError::TransportUnavailable {
-                    reason: "caller conversation has no workspace".to_owned(),
-                })?,
+                match workspace_from_extra(&caller.extra) {
+                    Some(path) => path,
+                    None if managed_workspace => String::new(),
+                    None => {
+                        return Err(ConversationCreateError::TransportUnavailable {
+                            reason: "caller conversation has no workspace".to_owned(),
+                        });
+                    }
+                },
                 true,
             ),
         };
@@ -242,6 +253,12 @@ impl ConversationService {
         let mut extra = Map::new();
         extra.insert("workspace".to_owned(), Value::String(workspace.clone()));
         extra.insert("custom_workspace".to_owned(), Value::Bool(true));
+        if managed_workspace && workspace_inherited && plan.inheritance != Inheritance::AssistantOverride {
+            extra.insert(
+                "workspace_project_id".to_owned(),
+                Value::String(caller.project_id.clone().unwrap()),
+            );
+        }
         for (key, value) in plan.legacy_triple.iter() {
             extra.insert(key.clone(), value.clone());
         }

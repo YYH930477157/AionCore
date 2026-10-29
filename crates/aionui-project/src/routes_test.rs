@@ -384,3 +384,35 @@ async fn resolve_ref_returns_the_ref_when_the_file_is_missing_even_for_an_unknow
     assert_eq!(body["data"]["file"]["kind"], "local");
     assert_eq!(body["data"]["upgraded"], false);
 }
+
+#[tokio::test]
+async fn workspace_routes_roundtrip_empty_draft_and_reject_invalid_default() {
+    let (router, _project, _pe, _dir, _db) = setup().await;
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/api/projects/workspaces",
+        Some(json!({"name":"Independent"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let project = body["data"]["project_id"].as_str().unwrap();
+    assert_eq!(body["data"]["workspace"]["managed"], true);
+    assert_eq!(body["data"]["workspace"]["default_pe_id"], Value::Null);
+    assert_eq!(body["data"]["explorer"]["entries"], json!([]));
+    let (status, state) = send(&router, "GET", &format!("/api/projects/{project}/workspace"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(state["data"]["dirty"], true);
+    let (status, error) = send(
+        &router,
+        "PUT",
+        &format!("/api/projects/{project}/workspace"),
+        Some(json!({"name":"Changed","roots":[],"default_pe_id":"missing"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["code"], "invalid_workspace");
+    let (status, error) = send(&router, "GET", "/api/projects/foreign/workspace", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(error["code"], "project_not_found");
+}

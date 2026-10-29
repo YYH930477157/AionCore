@@ -43,6 +43,7 @@ pub(crate) struct TurnStartInput {
     pub stored_workspace: String,
     pub turn_id: String,
     pub turn_claim: TurnClaim,
+    pub workspace_lease: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +63,7 @@ pub(crate) struct ConversationTurnOrchestrator {
 }
 
 struct TurnAttemptInput {
+    workspace_lease: Option<Arc<tokio::sync::OwnedRwLockReadGuard<()>>>,
     conv_id: String,
     turn_id: String,
     user_id: String,
@@ -175,6 +177,27 @@ impl ConversationTurnOrchestrator {
                 });
             }
         };
+
+        if let Err(err) = self
+            .service
+            .apply_managed_workspace(&input.user_id, &input.conv_id, &agent)
+            .await
+        {
+            let send_error = AgentSendError::from_agent_error(err.to_agent_error());
+            self.service
+                .persist_and_broadcast_send_failure_tip(
+                    &input.user_id,
+                    &input.conv_id,
+                    &input.turn_id,
+                    &send_error,
+                    Some(err.error_code()),
+                )
+                .await;
+            return Err(ConversationTurnResult {
+                status: ConversationTurnStatus::Failed,
+                error_message: Some(err.to_string()),
+            });
+        }
 
         if let Err(err) = self
             .service
@@ -372,8 +395,12 @@ impl ConversationTurnOrchestrator {
             let feedback_service = self.service.clone();
             let feedback_agent_id = availability_agent_id.clone();
             let (send_error_tx, send_error_rx) = oneshot::channel();
+            let workspace_lease = input.workspace_lease.clone();
 
-            tokio::spawn(async move {
+            let send_handle = tokio::spawn(async move {
+                // A terminal stream frame may precede completion of tool cleanup.
+                // Keep roots pinned until send_message itself has also returned.
+                let _workspace_lease = workspace_lease;
                 if let Err(e) = send_agent.send_message(current_send).await {
                     let failure_message = send_error_display_message(&e);
                     record_agent_session_failure(
@@ -415,6 +442,16 @@ impl ConversationTurnOrchestrator {
             });
 
             let outcome = relay.consume_with_send_error(rx, send_error_rx).await;
+            if agent.agent_type() == AgentType::Aionrs {
+                // Do not publish task completion while the embedded engine still
+                // has tool cleanup running after its terminal frame.
+                if outcome.attempt.terminal_error.is_some() {
+                    let _ = agent.cancel().await;
+                }
+                if let Err(err) = send_handle.await {
+                    warn!(conversation_id = %input.conv_id, error = %err, "aionrs send task failed to join");
+                }
+            }
             aggregate_summary.merge(&outcome.attempt);
 
             if let Some(session_key) = agent.get_session_key() {
@@ -459,6 +496,7 @@ impl ConversationTurnOrchestrator {
     }
 
     pub(crate) async fn run_user_turn(self, mut input: TurnStartInput) -> ConversationTurnResult {
+        let workspace_lease = input.workspace_lease.take().map(Arc::new);
         let mut turn_claim = input.turn_claim;
         let conv_id = input.conversation.id.clone();
         let turn_id = input.turn_id.clone();
@@ -484,6 +522,7 @@ impl ConversationTurnOrchestrator {
             let attempt_number = if replayed { 2 } else { 1 };
             let attempt_result = match self
                 .run_attempt(TurnAttemptInput {
+                    workspace_lease: workspace_lease.clone(),
                     conv_id: conv_id.clone(),
                     turn_id: turn_id.clone(),
                     user_id: input.user_id.clone(),
@@ -641,6 +680,7 @@ impl ConversationTurnOrchestrator {
             .await;
         }
 
+        drop(workspace_lease);
         let was_deleting = turn_claim.release_for_turn(&turn_id);
         self.service
             .complete_released_turn(&input.user_id, &conv_id, &turn_id, was_deleting)

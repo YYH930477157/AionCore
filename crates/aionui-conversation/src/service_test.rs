@@ -226,6 +226,9 @@ impl AgentAvailabilityFeedbackPort for RecordingAvailabilityFeedback {
 
 // ── Mock Repository ────────────────────────────────────────────────
 
+#[path = "managed_workspace_test.rs"]
+mod managed_workspace_test;
+
 struct MockRepo {
     rows: Mutex<Vec<ConversationRow>>,
     messages: Mutex<Vec<MessageRow>>,

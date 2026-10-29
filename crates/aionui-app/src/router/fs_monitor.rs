@@ -79,9 +79,10 @@ impl FsWirePush for WsManagerPush {
 /// Must be called from within a Tokio runtime (spawns the actor loop).
 pub fn spawn_fs_monitor(project: Arc<ProjectService>, manager: Arc<WebSocketManager>) -> Arc<dyn MessageRouter> {
     let push: Arc<dyn FsWirePush> = Arc::new(WsManagerPush { manager });
-    match FsMonitorActor::new(project, push, WARM_BUDGET) {
+    match FsMonitorActor::new(project.clone(), push, WARM_BUDGET) {
         Ok((actor, raw_rx)) => {
             let (inbound, inbound_rx) = tokio::sync::mpsc::unbounded_channel();
+            project.set_fs_roots_sender(inbound.clone());
             tokio::spawn(actor.run(inbound_rx, raw_rx));
             Arc::new(FsMessageRouter { inbound })
         }

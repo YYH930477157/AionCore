@@ -31,7 +31,7 @@ pub use models::{
     SkillImportRecordRow, SkillRow, UpdateAgentAvailabilitySnapshotParams, UpdateAgentHandshakeParams,
     UpdateAssistantParams, UpsertAgentMetadataParams, UpsertAssistantDefinitionParams, UpsertAssistantOverlayParams,
     UpsertAssistantPreferenceParams, UpsertConversationAssistantSnapshotParams, UpsertOverrideParams, UserOrderRow,
-    UserStatus, UserType,
+    UserStatus, UserType, WorkspaceEntryInput, WorkspaceRow,
 };
 pub use repository::channel::UpdatePluginStatusParams;
 pub use repository::conversation::{

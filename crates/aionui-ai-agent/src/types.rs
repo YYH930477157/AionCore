@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+pub use aion_agent::engine::WorkspaceRoot as AionrsWorkspaceRoot;
+
 use aion_config::compat::OpenAiApiMode;
 use aion_types::message::ImageInputCapability;
 use serde::{Deserialize, Serialize};

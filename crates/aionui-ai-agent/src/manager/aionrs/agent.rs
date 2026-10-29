@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use aion_agent::bootstrap::AgentBootstrap;
-use aion_agent::engine::AgentEngine;
+use aion_agent::engine::{AgentEngine, WorkspaceRoot};
 use aion_agent::output::OutputSink;
 use aion_agent::session::Session;
 use aion_config::compact::CompactConfig;
@@ -153,6 +153,19 @@ impl Drop for AionrsAgentManager {
 }
 
 impl AionrsAgentManager {
+    /// Refresh the shared built-in tool workspace before starting a new turn.
+    pub async fn update_workspace_context(
+        &self,
+        default_cwd: Option<PathBuf>,
+        roots: Vec<WorkspaceRoot>,
+    ) -> Result<(), AgentError> {
+        self.engine
+            .lock()
+            .await
+            .update_workspace_context(default_cwd, roots)
+            .map_err(|error| AgentError::internal(format!("Workspace context update failed: {error}")))
+    }
+
     pub async fn new(
         conversation_id: String,
         workspace: String,

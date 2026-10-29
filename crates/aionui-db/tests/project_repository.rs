@@ -9,6 +9,55 @@ async fn store() -> (Arc<dyn IProjectStore>, Database) {
 }
 
 #[tokio::test]
+async fn managed_workspace_replacement_rolls_back_and_enforces_owner() {
+    let (store, _db) = store().await;
+    let folder = store.upsert_folder("file:///managed", "file:///managed").await.unwrap();
+    let row = aionui_db::WorkspaceRow {
+        project_id: "independent-project".into(),
+        config_path: None,
+        dirty: true,
+        default_pe_id: Some("stable-root".into()),
+        saved_json: None,
+    };
+    let root = aionui_db::WorkspaceEntryInput {
+        pe_id: "stable-root".into(),
+        folder_id: folder.folder_id,
+        display_name: Some("Alias".into()),
+    };
+    store
+        .put_workspace("system_default_user", "Before", &row, std::slice::from_ref(&root))
+        .await
+        .unwrap();
+    let mut duplicate = root.clone();
+    duplicate.pe_id = "second-root".into();
+    assert!(
+        store
+            .put_workspace("system_default_user", "Invalid", &row, &[root.clone(), duplicate])
+            .await
+            .unwrap_err()
+            .is_unique_violation()
+    );
+    let detail = store
+        .get_project("system_default_user", &row.project_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.name, "Before");
+    let entries = store
+        .list_entries("system_default_user", &row.project_id)
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0.pe_id, "stable-root");
+    assert_eq!(entries[0].0.display_name.as_deref(), Some("Alias"));
+    assert!(matches!(
+        store.put_workspace("foreign", "Hijacked", &row, &[root]).await,
+        Err(aionui_db::DbError::NotFound(_))
+    ));
+    assert!(store.get_workspace("foreign", &row.project_id).await.unwrap().is_none());
+}
+
+#[tokio::test]
 async fn upsert_folder_is_idempotent_by_canonical() {
     let (store, _db) = store().await;
 

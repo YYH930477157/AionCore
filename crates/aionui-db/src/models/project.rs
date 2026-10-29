@@ -1,6 +1,22 @@
 use aionui_common::TimestampMs;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct WorkspaceRow {
+    pub project_id: String,
+    pub config_path: Option<String>,
+    pub dirty: bool,
+    pub default_pe_id: Option<String>,
+    pub saved_json: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceEntryInput {
+    pub pe_id: String,
+    pub folder_id: String,
+    pub display_name: Option<String>,
+}
+
 /// Project kind, stored as the TEXT `projects.kind` column.
 ///
 /// Column values follow existing crate convention (TEXT + service-layer

@@ -17,6 +17,17 @@ use crate::models::{FolderRow, ProjectExplorerRow, ProjectKind, ProjectRow};
 /// user can neither see nor mutate another user's projects.
 #[async_trait]
 pub trait IProjectStore: Send + Sync {
+    async fn get_workspace(&self, user_id: &str, project_id: &str) -> Result<Option<crate::WorkspaceRow>, DbError>;
+
+    /// Atomically insert/promote/update a managed project and its complete draft.
+    /// Existing project and entry identities must belong to this owner/project.
+    async fn put_workspace(
+        &self,
+        user_id: &str,
+        name: &str,
+        workspace: &crate::WorkspaceRow,
+        roots: &[crate::WorkspaceEntryInput],
+    ) -> Result<(), DbError>;
     /// `INSERT OR IGNORE` a folder keyed by `canonical`, then `SELECT` it.
     /// Idempotent: on an existing canonical the row is returned unchanged
     /// (`resource_uri` keeps its first-insert value, `updated_at` is not bumped).

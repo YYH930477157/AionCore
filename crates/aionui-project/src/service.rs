@@ -14,11 +14,15 @@ use crate::types::{
     ResolveOutput, ResolvedResource, RuntimeStatus,
 };
 
+mod workspace;
+pub use workspace::{ManagedWorkspaceRuntime, WorkspaceRuntimeRoot};
+
 /// Orchestrates the three project-bind tables through an injected
 /// [`IProjectStore`]. Owns filesystem operations (temp-dir creation,
 /// access checks) and the temp-root path; holds no transactions.
 #[derive(Clone)]
 pub struct ProjectService {
+    workspace_locks: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::RwLock<()>>>>>,
     store: Arc<dyn IProjectStore>,
     temp_root: PathBuf,
     /// Sink for project-root changes to the source-control actor. Shared across
@@ -27,14 +31,17 @@ pub struct ProjectService {
     /// `None` in tests and the HTTP-only assembly path, where a root change simply
     /// notifies nobody.
     scm_roots_tx: Arc<OnceLock<UnboundedSender<ScmInbound>>>,
+    fs_roots_tx: Arc<OnceLock<UnboundedSender<crate::monitor::FsInbound>>>,
 }
 
 impl ProjectService {
     pub fn new(store: Arc<dyn IProjectStore>, temp_root: PathBuf) -> Self {
         Self {
+            workspace_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             store,
             temp_root,
             scm_roots_tx: Arc::new(OnceLock::new()),
+            fs_roots_tx: Arc::new(OnceLock::new()),
         }
     }
 
@@ -44,6 +51,18 @@ impl ProjectService {
     /// clones, setting it on any clone makes it visible to all of them.
     pub fn set_scm_roots_sender(&self, tx: UnboundedSender<ScmInbound>) {
         let _ = self.scm_roots_tx.set(tx);
+    }
+
+    pub fn set_fs_roots_sender(&self, tx: UnboundedSender<crate::monitor::FsInbound>) {
+        let _ = self.fs_roots_tx.set(tx);
+    }
+
+    fn invalidate_fs_roots(&self, pe_ids: Vec<String>) {
+        if !pe_ids.is_empty()
+            && let Some(tx) = self.fs_roots_tx.get()
+        {
+            let _ = tx.send(crate::monitor::FsInbound::InvalidateRoots { pe_ids });
+        }
     }
 
     /// Tell the source-control actor that a project's attached-folder set changed,
@@ -165,6 +184,10 @@ impl ProjectService {
             .ok_or_else(|| ProjectError::ProjectNotFound {
                 project_id: input.project_id.clone(),
             })?;
+        let _guard = self.workspace_write_lock(&input.project_id)?;
+        if self.store.get_workspace(user_id, &input.project_id).await?.is_some() {
+            return self.attach_managed_folder(user_id, input).await;
+        }
         let canonical = canonical::canonicalize(&input.uri)?;
         self.ensure_accessible(&canonical)?;
         let folder = self.store.upsert_folder(canonical.as_str(), &input.uri).await?;
@@ -220,12 +243,23 @@ impl ProjectService {
                 .ok_or_else(|| ProjectError::ProjectExplorerNotFound {
                     pe_id: pe_id.to_owned(),
                 })?;
+        let _guard = self.workspace_write_lock(&entry.project_id)?;
+        if self.store.get_workspace(user_id, &entry.project_id).await?.is_some() {
+            let mut draft = self.workspace_draft(user_id, &entry.project_id).await?;
+            draft.roots.retain(|root| root.pe_id.as_deref() != Some(pe_id));
+            if draft.default_pe_id.as_deref() == Some(pe_id) {
+                draft.default_pe_id = None;
+            }
+            self.replace_workspace_draft(user_id, &entry.project_id, draft).await?;
+            return Ok(());
+        }
         if entry.role == Role::Workspace.as_str() {
             return Err(ProjectError::WorkspaceEntryImmutable {
                 pe_id: pe_id.to_owned(),
             });
         }
         self.store.remove_entry(user_id, pe_id).await?;
+        self.invalidate_fs_roots(vec![pe_id.to_owned()]);
         // Detaching a folder can drop a repository from the project's set.
         self.notify_roots_changed(&entry.project_id, user_id);
         Ok(())
@@ -240,7 +274,10 @@ impl ProjectService {
     /// orchestration, BR-19). A best-effort `repositoriesChanged` notify lets the
     /// source-control actor recompute (now-empty) roots for the gone project.
     pub async fn delete_project(&self, user_id: &str, project_id: &str) -> Result<(), ProjectError> {
+        let _guard = self.workspace_write_lock(project_id)?;
+        let old_roots = self.store.list_entries(user_id, project_id).await?;
         self.store.delete_project(user_id, project_id).await?;
+        self.invalidate_fs_roots(old_roots.into_iter().map(|(entry, _)| entry.pe_id).collect());
         self.notify_roots_changed(project_id, user_id);
         Ok(())
     }
@@ -251,6 +288,27 @@ impl ProjectService {
         project_id: &str,
         ordered_pe_ids: &[String],
     ) -> Result<(), ProjectError> {
+        let _guard = self.workspace_write_lock(project_id)?;
+        if self.store.get_workspace(user_id, project_id).await?.is_some() {
+            let mut draft = self.workspace_draft(user_id, project_id).await?;
+            let ids: std::collections::HashSet<_> = ordered_pe_ids.iter().collect();
+            if ids.len() != draft.roots.len()
+                || ids.len() != ordered_pe_ids.len()
+                || draft.roots.iter().any(|r| !ids.contains(r.pe_id.as_ref().unwrap()))
+            {
+                return Err(ProjectError::InvalidWorkspace {
+                    reason: "root order must contain every root exactly once".into(),
+                });
+            }
+            draft.roots.sort_by_key(|r| {
+                ordered_pe_ids
+                    .iter()
+                    .position(|id| Some(id) == r.pe_id.as_ref())
+                    .unwrap()
+            });
+            self.replace_workspace_draft(user_id, project_id, draft).await?;
+            return Ok(());
+        }
         self.store.reorder(user_id, project_id, ordered_pe_ids).await?;
         Ok(())
     }
@@ -261,6 +319,23 @@ impl ProjectService {
         pe_id: &str,
         display_name: Option<String>,
     ) -> Result<ProjectExplorerRow, ProjectError> {
+        if let Some(entry) = self.store.get_entry(user_id, pe_id).await? {
+            let _guard = self.workspace_write_lock(&entry.project_id)?;
+            if self.store.get_workspace(user_id, &entry.project_id).await?.is_some() {
+                let mut draft = self.workspace_draft(user_id, &entry.project_id).await?;
+                for root in &mut draft.roots {
+                    if root.pe_id.as_deref() == Some(pe_id) {
+                        root.display_name = display_name.clone();
+                    }
+                }
+                self.replace_workspace_draft(user_id, &entry.project_id, draft).await?;
+                return self
+                    .store
+                    .get_entry(user_id, pe_id)
+                    .await?
+                    .ok_or_else(|| ProjectError::ProjectExplorerNotFound { pe_id: pe_id.into() });
+            }
+        }
         match self.store.rename_entry(user_id, pe_id, display_name.as_deref()).await {
             Ok(row) => Ok(row),
             // A row this owner cannot see (missing or another user's) is the
@@ -302,6 +377,11 @@ impl ProjectService {
         }
 
         Ok(ProjectDetail {
+            workspace: self
+                .store
+                .get_workspace(user_id, project_id)
+                .await?
+                .map(workspace::state_of),
             id: project.project_id,
             name: project.name,
             kind: project.kind,
@@ -377,6 +457,18 @@ impl ProjectService {
         project_id: &str,
         folder_id: &str,
     ) -> Result<(), ProjectError> {
+        if let Some(workspace) = self.store.get_workspace(user_id, project_id).await? {
+            let entries = self.store.list_entries(user_id, project_id).await?;
+            if entries.iter().any(|(entry, _)| {
+                Some(&entry.pe_id) == workspace.default_pe_id.as_ref() && entry.folder_id == folder_id
+            }) {
+                return Ok(());
+            }
+            return Err(ProjectError::WorkspaceFolderMismatch {
+                project_id: project_id.into(),
+                folder_id: folder_id.into(),
+            });
+        }
         let workspace = self
             .store
             .list_entries(user_id, project_id)

@@ -225,3 +225,17 @@ debug = "line-tables-only"
 split-debuginfo = "unpacked"
 incremental = false
 
+# Build Woody's workspace-aware runtime from the adjacent patched source tree.
+[patch."https://github.com/YYH930477157/aionrs.git"]
+aion-agent = { path = "../aionrs/crates/aion-agent" }
+aion-compact = { path = "../aionrs/crates/aion-compact" }
+aion-config = { path = "../aionrs/crates/aion-config" }
+aion-mcp = { path = "../aionrs/crates/aion-mcp" }
+aion-memory = { path = "../aionrs/crates/aion-memory" }
+aion-process = { path = "../aionrs/crates/aion-process" }
+aion-protocol = { path = "../aionrs/crates/aion-protocol" }
+aion-providers = { path = "../aionrs/crates/aion-providers" }
+aion-skills = { path = "../aionrs/crates/aion-skills" }
+aion-tools = { path = "../aionrs/crates/aion-tools" }
+aion-types = { path = "../aionrs/crates/aion-types" }
+

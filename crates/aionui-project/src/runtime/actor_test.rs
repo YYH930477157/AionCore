@@ -33,6 +33,39 @@ fn sub(session: &str) -> Subscriber {
 }
 
 #[tokio::test]
+async fn invalidated_roots_stop_old_path_deltas_after_relocation() {
+    let (mut shard, dir) = real_shard(100);
+    let canonical = canon(dir.path()).as_str().to_owned();
+    shard
+        .handle(Command::Subscribe {
+            sub: sub("s1"),
+            canonical: canonical.clone(),
+            now: 0,
+        })
+        .await
+        .unwrap();
+    shard
+        .handle(Command::DropRoots {
+            pe_ids: vec!["pe1".into()],
+            now: 1,
+        })
+        .await
+        .unwrap();
+    std::fs::write(dir.path().join("stale.txt"), b"old root").unwrap();
+    let output = shard
+        .handle(Command::Apply {
+            canonical,
+            hint: Hint::All,
+        })
+        .await
+        .unwrap();
+    assert!(
+        output.is_empty(),
+        "old root must never publish under a relocated stable pe_id"
+    );
+}
+
+#[tokio::test]
 async fn subscribe_mounts_and_returns_snapshot_to_subscriber() {
     let (mut shard, dir) = real_shard(100);
     std::fs::write(dir.path().join("a.txt"), b"x").unwrap();

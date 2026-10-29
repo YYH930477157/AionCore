@@ -32,6 +32,10 @@ use super::watcher::RawEvent;
 /// node).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    DropRoots {
+        pe_ids: Vec<String>,
+        now: Millis,
+    },
     Subscribe {
         sub: Subscriber,
         canonical: String,
@@ -196,6 +200,10 @@ impl Shard {
     /// Process one command, mutating owned state and returning any outputs.
     pub async fn handle(&mut self, command: Command) -> Result<Vec<ShardOutput>, FsError> {
         match command {
+            Command::DropRoots { pe_ids, now } => {
+                self.subs.drop_roots(&pe_ids, now);
+                Ok(Vec::new())
+            }
             Command::Subscribe { sub, canonical, now } => {
                 let outcome = self.subs.subscribe(sub.clone(), &canonical, now);
                 // Deliver the current listing to the subscribing session. On a

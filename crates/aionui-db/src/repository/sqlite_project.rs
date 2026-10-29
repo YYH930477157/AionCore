@@ -23,6 +23,60 @@ const ENTRY_COLS: &str = "pe_id, project_id, folder_id, role, display_name, orde
 
 #[async_trait::async_trait]
 impl IProjectStore for SqliteProjectStore {
+    async fn get_workspace(&self, user_id: &str, project_id: &str) -> Result<Option<crate::WorkspaceRow>, DbError> {
+        Ok(sqlx::query_as("SELECT w.project_id, w.config_path, w.dirty, w.default_pe_id, w.saved_json FROM project_workspaces w JOIN projects p ON p.project_id = w.project_id WHERE w.project_id = ? AND w.owner_user_id = ? AND p.user_id = ?")
+            .bind(project_id).bind(user_id).bind(user_id).fetch_optional(&self.pool).await?)
+    }
+
+    async fn put_workspace(
+        &self,
+        user_id: &str,
+        name: &str,
+        workspace: &crate::WorkspaceRow,
+        roots: &[crate::WorkspaceEntryInput],
+    ) -> Result<(), DbError> {
+        let now = now_ms();
+        let project_id = &workspace.project_id;
+        let mut tx = self.pool.begin().await?;
+        let owner: Option<String> = sqlx::query_scalar("SELECT user_id FROM projects WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if owner.as_deref().is_some_and(|owner| owner != user_id) {
+            return Err(DbError::NotFound("project".into()));
+        }
+        for root in roots {
+            let existing: Option<(String, String)> =
+                sqlx::query_as("SELECT project_id, owner_user_id FROM project_explorer WHERE pe_id = ?")
+                    .bind(&root.pe_id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            if existing.is_some_and(|(project, owner)| project != *project_id || owner != user_id) {
+                return Err(DbError::Conflict(
+                    "workspace root identity belongs to another project".into(),
+                ));
+            }
+        }
+        sqlx::query("INSERT INTO projects (project_id, user_id, name, kind, created_at, updated_at) VALUES (?, ?, ?, 'standard', ?, ?) ON CONFLICT(project_id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at")
+            .bind(project_id).bind(user_id).bind(name).bind(now).bind(now).execute(&mut *tx).await?;
+        // Delete/reinsert inside the transaction supports swaps of folder identities
+        // without violating the project/folder unique index halfway through.
+        sqlx::query("DELETE FROM project_explorer WHERE project_id = ? AND owner_user_id = ?")
+            .bind(project_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        for (position, root) in roots.iter().enumerate() {
+            sqlx::query("INSERT INTO project_explorer (pe_id, project_id, owner_user_id, folder_id, role, display_name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, 'attached', ?, ?, ?, ?)")
+                .bind(&root.pe_id).bind(project_id).bind(user_id).bind(&root.folder_id).bind(&root.display_name)
+                .bind(position as i64).bind(now).bind(now).execute(&mut *tx).await?;
+        }
+        sqlx::query("INSERT INTO project_workspaces (project_id, owner_user_id, config_path, dirty, default_pe_id, saved_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET config_path = excluded.config_path, dirty = excluded.dirty, default_pe_id = excluded.default_pe_id, saved_json = excluded.saved_json")
+            .bind(project_id).bind(user_id).bind(&workspace.config_path).bind(workspace.dirty)
+            .bind(&workspace.default_pe_id).bind(&workspace.saved_json).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
     async fn upsert_folder(&self, canonical: &str, raw_uri: &str) -> Result<FolderRow, DbError> {
         let now = now_ms();
         let folder_id = generate_prefixed_id("folder");
@@ -258,6 +312,11 @@ impl IProjectStore for SqliteProjectStore {
         // Explorer entries first, then the project row — both owner-scoped, one
         // transaction. `folders` are global and intentionally left intact.
         let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM project_workspaces WHERE project_id = ? AND owner_user_id = ?")
+            .bind(project_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM project_explorer WHERE project_id = ? AND owner_user_id = ?")
             .bind(project_id)
             .bind(user_id)

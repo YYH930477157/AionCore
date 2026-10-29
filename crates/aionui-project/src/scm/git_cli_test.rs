@@ -21,6 +21,9 @@ fn init_repo(dir: &Path) -> Repository {
     let mut cfg = repo.config().expect("config");
     cfg.set_str("user.name", "scm test").expect("set name");
     cfg.set_str("user.email", "scm@test.local").expect("set email");
+    // Individual line-ending cases override this deterministic fixture default.
+    cfg.set_bool("core.autocrlf", false)
+        .expect("disable inherited line ending conversion");
     repo
 }
 
@@ -425,6 +428,38 @@ async fn stages_unstages_and_discards_through_git() {
     );
     assert_eq!(*trash.0.lock().expect("log"), vec![tmp.path().join("scratch.txt")]);
     assert!(provider.status(&repo_ref).await.expect("status").resources.is_empty());
+}
+
+#[tokio::test]
+async fn libgit_discard_of_cli_staged_crlf_file_reports_only_staged_changes() {
+    let tmp = TempDir::new().expect("tempdir");
+    let repo = init_repo(tmp.path());
+    repo.config().unwrap().set_bool("core.autocrlf", true).unwrap();
+    write(tmp.path(), "discard.ts", "export const level = \"BASE\";\n");
+    commit_all(&repo, "base");
+    write(tmp.path(), "discard.ts", "export const level = \"STAGED_VALUE\";\n");
+    let cli = system_git(Arc::new(RecordingTrash::default()));
+    let cli_ref = discovered(&cli, tmp.path()).await;
+    cli.staging()
+        .unwrap()
+        .stage(&cli_ref, &[file("discard.ts")])
+        .await
+        .unwrap();
+    write(tmp.path(), "discard.ts", "export const level = \"WORKING_VALUE\";\n");
+    let provider = GitScmProvider::with_backend(Arc::new(RecordingTrash::default()), None);
+    let repo_ref = discovered(&provider, tmp.path()).await;
+    assert_eq!(provider.status(&repo_ref).await.unwrap().resources.len(), 2);
+    provider.revert(&repo_ref, &[file("discard.ts")]).await.unwrap();
+    let status = provider.status(&repo_ref).await.unwrap();
+    assert_eq!(
+        rows(&status),
+        vec![("discard.ts".to_owned(), ScmResourceState::Modified, Some(true), None)]
+    );
+    assert!(
+        std::fs::read_to_string(tmp.path().join("discard.ts"))
+            .unwrap()
+            .contains("STAGED_VALUE")
+    );
 }
 
 #[tokio::test]

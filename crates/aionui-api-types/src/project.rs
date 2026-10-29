@@ -22,6 +22,50 @@ pub struct ProjectDetailResponse {
     /// Project display name (explorer header).
     pub name: String,
     pub explorer: ProjectExplorer,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceState {
+    pub managed: bool,
+    pub config_path: Option<String>,
+    pub dirty: bool,
+    pub default_pe_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateWorkspaceRequest {
+    pub name: String,
+    #[serde(default)]
+    pub uri: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceRootRequest {
+    #[serde(default)]
+    pub pe_id: Option<String>,
+    pub uri: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateWorkspaceRequest {
+    pub name: String,
+    pub roots: Vec<WorkspaceRootRequest>,
+    pub default_pe_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpenWorkspaceRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaveWorkspaceRequest {
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// The explorer view of a project: its pinned workspace root plus every

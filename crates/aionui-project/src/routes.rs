@@ -19,8 +19,9 @@
 use std::sync::Arc;
 
 use aionui_api_types::{
-    ApiResponse, AttachFolderRequest, ProjectDetailResponse, ProjectEntry, ProjectExplorer, ResolveRefRequest,
-    ResolveRefResponse,
+    ApiResponse, AttachFolderRequest, CreateWorkspaceRequest, OpenWorkspaceRequest, ProjectDetailResponse,
+    ProjectEntry, ProjectExplorer, ResolveRefRequest, ResolveRefResponse, SaveWorkspaceRequest, UpdateWorkspaceRequest,
+    WorkspaceState,
 };
 use aionui_auth::CurrentUser;
 use aionui_common::ApiError;
@@ -46,11 +47,88 @@ pub struct ProjectRouterState {
 /// All routes require authentication (applied by the caller).
 pub fn project_routes(state: ProjectRouterState) -> Router {
     Router::new()
+        .route("/api/projects/workspaces", post(create_workspace))
+        .route("/api/projects/workspaces/open", post(open_workspace))
+        .route(
+            "/api/projects/{project_id}/workspace",
+            get(workspace_state).put(update_workspace),
+        )
+        .route("/api/projects/{project_id}/workspace/save", post(save_workspace))
+        .route("/api/projects/{project_id}/workspace/discard", post(discard_workspace))
         .route("/api/projects/{project_id}", get(get_project))
         .route("/api/projects/{project_id}/folders", post(attach_folder))
         .route("/api/projects/{project_id}/folders/{pe_id}", delete(remove_folder))
         .route("/api/projects/{project_id}/resolve-ref", post(resolve_ref))
         .with_state(state)
+}
+
+async fn create_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    body: Result<Json<CreateWorkspaceRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<ProjectDetailResponse>>, ApiError> {
+    let Json(request) = body.map_err(ApiError::from)?;
+    Ok(Json(ApiResponse::ok(to_detail_response(
+        state.project.create_workspace(&user.id, request).await?,
+    ))))
+}
+
+async fn open_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    body: Result<Json<OpenWorkspaceRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<ProjectDetailResponse>>, ApiError> {
+    let Json(request) = body.map_err(ApiError::from)?;
+    Ok(Json(ApiResponse::ok(to_detail_response(
+        state.project.open_workspace(&user.id, request.path).await?,
+    ))))
+}
+
+async fn workspace_state(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(project_id): Path<String>,
+) -> Result<Json<ApiResponse<WorkspaceState>>, ApiError> {
+    Ok(Json(ApiResponse::ok(
+        state.project.workspace_state(&user.id, &project_id).await?,
+    )))
+}
+
+async fn update_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(project_id): Path<String>,
+    body: Result<Json<UpdateWorkspaceRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<ProjectDetailResponse>>, ApiError> {
+    let Json(request) = body.map_err(ApiError::from)?;
+    Ok(Json(ApiResponse::ok(to_detail_response(
+        state.project.update_workspace(&user.id, &project_id, request).await?,
+    ))))
+}
+
+async fn save_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(project_id): Path<String>,
+    body: Result<Json<SaveWorkspaceRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<WorkspaceState>>, ApiError> {
+    let Json(request) = body.map_err(ApiError::from)?;
+    Ok(Json(ApiResponse::ok(
+        state
+            .project
+            .save_workspace(&user.id, &project_id, request.path)
+            .await?,
+    )))
+}
+
+async fn discard_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(project_id): Path<String>,
+) -> Result<Json<ApiResponse<ProjectDetailResponse>>, ApiError> {
+    Ok(Json(ApiResponse::ok(to_detail_response(
+        state.project.discard_workspace(&user.id, &project_id).await?,
+    ))))
 }
 
 /// `GET /api/projects/{project_id}` — full project detail + all roots in one
@@ -147,6 +225,7 @@ async fn remove_folder(
 
 fn to_detail_response(detail: ProjectDetail) -> ProjectDetailResponse {
     ProjectDetailResponse {
+        workspace: detail.workspace,
         project_id: detail.id,
         name: detail.name,
         explorer: ProjectExplorer {
@@ -178,6 +257,13 @@ fn to_entry(entry: ProjectExplorerEntry) -> ProjectEntry {
 impl From<ProjectError> for ApiError {
     fn from(err: ProjectError) -> Self {
         let (status, code, details) = match &err {
+            ProjectError::WorkspaceBusy { project_id } => (
+                StatusCode::CONFLICT,
+                "project_workspace_busy",
+                Some(json!({"project_id": project_id})),
+            ),
+            ProjectError::InvalidWorkspace { .. } => (StatusCode::BAD_REQUEST, "invalid_workspace", None),
+            ProjectError::WorkspaceIo => (StatusCode::BAD_REQUEST, "workspace_io_error", None),
             ProjectError::ProjectNotFound { project_id } => (
                 StatusCode::NOT_FOUND,
                 "project_not_found",

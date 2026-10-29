@@ -34,6 +34,7 @@ const SEARCH_MATCH_BATCH: usize = 64;
 /// (`fs/searchCancel`) or superseded by a newer search on the same connection.
 #[derive(Debug, Clone)]
 pub(super) struct ActiveSearch {
+    pub(super) pe_ids: Vec<String>,
     /// The originating request `id`, echoed as `search_id`; used to match an
     /// incoming `fs/searchCancel`.
     pub(super) search_id: Value,
