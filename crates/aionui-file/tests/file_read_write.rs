@@ -356,7 +356,10 @@ async fn write_file_nested_relative_path() {
 
     let events = recorder.take_events();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].data["relative_path"], "src/utils/helper.ts");
+    assert_eq!(
+        std::path::Path::new(events[0].data["relative_path"].as_str().unwrap()),
+        std::path::Path::new("src/utils/helper.ts")
+    );
 }
 
 // -----------------------------------------------------------------------

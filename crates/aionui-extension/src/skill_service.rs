@@ -1050,6 +1050,17 @@ async fn replace_existing_path(path: &Path) -> Result<(), ExtensionError> {
         Err(e) => return Err(e.into()),
     };
 
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+        // Directory symlinks and junctions require RemoveDirectory on Windows,
+        // including dangling links. Remove only the link, never its target.
+        if metadata.file_type().is_symlink_dir() {
+            tokio::fs::remove_dir(path).await?;
+            return Ok(());
+        }
+    }
+
     if metadata.file_type().is_symlink() || metadata.is_file() {
         tokio::fs::remove_file(path).await?;
     } else {
@@ -2711,6 +2722,25 @@ mod tests {
         let user_root = default_user_skill_root(&paths);
         assert!(!user_root.join("too-large").exists());
         assert!(!has_import_staging_dirs(&user_root));
+    }
+
+    #[tokio::test]
+    async fn replacing_skill_directory_link_preserves_its_target() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("source");
+        create_skill_in_dir(&source, "linked", "Original content");
+        let original = source.join("linked");
+        let link = tmp.path().join("linked");
+        create_symlink(&original, &link).await.unwrap();
+
+        replace_existing_path(&link).await.unwrap();
+
+        assert!(std::fs::symlink_metadata(&link).is_err());
+        assert!(
+            std::fs::read_to_string(original.join(SKILL_MANIFEST_FILE))
+                .unwrap()
+                .contains("Original content")
+        );
     }
 
     #[tokio::test]

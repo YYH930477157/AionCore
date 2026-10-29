@@ -2032,6 +2032,9 @@ async fn create_rejects_unavailable_workspace_with_trailing_whitespace_in_reques
     std::fs::create_dir(&dir).unwrap();
     let workspace = dir.join("workspace");
     std::fs::create_dir(&workspace).unwrap();
+    // Use a verbatim path on Windows: ordinary Win32 paths silently resolve
+    // trailing spaces to the existing directory, so they are not unavailable.
+    let workspace = std::fs::canonicalize(workspace).unwrap();
     let workspace_with_trailing_space = format!("{} ", workspace.to_string_lossy());
 
     let req: CreateConversationRequest = serde_json::from_value(json!({
