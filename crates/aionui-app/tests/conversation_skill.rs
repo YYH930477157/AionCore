@@ -22,7 +22,7 @@ fn skill_prose() -> String {
 #[test]
 fn the_skill_declares_the_name_the_resolver_will_discover() {
     let body = skill_body();
-    assert!(body.starts_with("---\n"), "front matter is required");
+    assert_eq!(body.lines().next(), Some("---"), "front matter is required");
     assert!(body.contains("name: conversation-create"), "{body}");
     assert!(body.contains("description:"), "{body}");
 }
