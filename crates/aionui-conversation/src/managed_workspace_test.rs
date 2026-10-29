@@ -192,9 +192,7 @@ async fn managed_workspace_binding_uses_current_default_instead_of_chat_creation
         .unwrap();
     let options = svc.build_task_options(&row).await.unwrap();
     assert_eq!(
-        Path::new(&options.context.workspace.path)
-            .canonicalize()
-            .unwrap(),
+        Path::new(&options.context.workspace.path).canonicalize().unwrap(),
         second.path().canonicalize().unwrap()
     );
 }
