@@ -520,3 +520,52 @@ async fn open_workspace_rejects_legacy_identity_collision_without_promoting_it()
     assert!(unchanged.workspace.is_none());
     assert_eq!(unchanged.explorer.entries[0].pe_id, old.project_explorer.pe_id);
 }
+
+async fn named_workspace(svc: &ProjectService, name: &str) -> aionui_project::ProjectDetail {
+    svc.create_workspace(
+        USER,
+        CreateWorkspaceRequest {
+            name: name.into(),
+            uri: None,
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn save_refuses_a_target_that_is_not_a_workspace_file() {
+    let (svc, _db) = service().await;
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = named_workspace(&svc, "Guarded").await;
+    let unrelated = dir.path().join("notes.txt");
+    std::fs::write(&unrelated, "keep me").unwrap();
+
+    let error = svc
+        .save_workspace(USER, &workspace.id, Some(unrelated.to_string_lossy().into_owned()))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains(".woody-workspace"), "{error}");
+    assert_eq!(std::fs::read_to_string(&unrelated).unwrap(), "keep me");
+}
+
+#[tokio::test]
+async fn a_workspace_opened_from_another_extension_saves_back_to_that_file() {
+    let (svc, _db) = service().await;
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = named_workspace(&svc, "Portable").await;
+    let saved = dir.path().join("portable.woody-workspace");
+    svc.save_workspace(USER, &workspace.id, Some(saved.to_string_lossy().into_owned()))
+        .await
+        .unwrap();
+    let renamed = dir.path().join("portable.json");
+    std::fs::rename(&saved, &renamed).unwrap();
+    svc.open_workspace(USER, renamed.to_string_lossy().into_owned())
+        .await
+        .unwrap();
+
+    svc.save_workspace(USER, &workspace.id, None).await.unwrap();
+
+    assert!(renamed.exists());
+}

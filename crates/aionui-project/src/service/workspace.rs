@@ -357,10 +357,17 @@ impl ProjectService {
         let _guard = self.acquire_workspace_task(user_id, project_id).await?;
         let draft = self.workspace_draft(user_id, project_id).await?;
         let current = self.store.get_workspace(user_id, project_id).await?;
+        let saved_path = current.and_then(|r| r.config_path);
         let path = path
-            .or_else(|| current.and_then(|r| r.config_path))
+            .or_else(|| saved_path.clone())
             .ok_or_else(|| invalid("a path is required for the first save"))?;
         let path = absolute_config_path(&path)?;
+        // The save replaces whatever is at the target, so a new target must be a workspace file.
+        // The file a workspace was opened from stays writable even under another name.
+        let is_saved_file = saved_path.is_some_and(|saved| Path::new(&saved) == path);
+        if !is_saved_file && !is_workspace_file(&path) {
+            return Err(invalid("workspace files must use the .woody-workspace extension"));
+        }
         let parent = path.parent().ok_or_else(|| invalid("config path has no parent"))?;
         let roots = draft
             .roots
@@ -491,6 +498,11 @@ impl ProjectService {
         self.persist_workspace(user_id, row, draft).await?;
         self.get_project(user_id, &file.project_id).await
     }
+}
+
+fn is_workspace_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("woody-workspace"))
 }
 
 fn absolute_config_path(value: &str) -> Result<PathBuf, ProjectError> {
