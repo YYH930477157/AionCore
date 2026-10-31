@@ -87,12 +87,12 @@ done <<<"${sizes}"
 # Refuse to publish a build that cannot open the databases earlier releases made.
 case "$(uname -s)" in
   MINGW* | MSYS*)
-    unzip -q "${dist}"/*-windows-msvc.zip -d "${upgrade}/new"
+    unzip -q "${dist}"/*-x86_64-pc-windows-msvc.zip -d "${upgrade}/new"
     previous_tags="${AIONCORE_UPGRADE_FROM:-$(gh release list --repo "${repo}" --exclude-drafts --limit 20 \
       --json tagName -q '.[].tagName' | grep -vx "${tag}" | head -n 1)}"
     for previous in ${previous_tags}; do
       echo "Checking the upgrade from ${previous}..."
-      gh release download "${previous}" --repo "${repo}" --pattern '*windows-msvc.zip' --dir "${upgrade}/${previous}"
+      gh release download "${previous}" --repo "${repo}" --pattern '*x86_64-pc-windows-msvc.zip' --dir "${upgrade}/${previous}"
       unzip -q "${upgrade}/${previous}"/*.zip -d "${upgrade}/${previous}"
       "${script_dir}/check-upgrade.sh" "${upgrade}/${previous}/aioncore.exe" "${upgrade}/new/aioncore.exe"
     done
