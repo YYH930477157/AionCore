@@ -265,6 +265,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
     async fn test_execute_hook_success() {
         let dir = tempfile::tempdir().unwrap();
         let script_path = dir.path().join("hook.sh");
@@ -282,6 +283,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
     async fn test_execute_hook_nonzero_exit() {
         let dir = tempfile::tempdir().unwrap();
         let script_path = dir.path().join("fail.sh");
@@ -311,6 +313,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
     async fn test_execute_hook_timeout() {
         let dir = tempfile::tempdir().unwrap();
         let script_path = dir.path().join("slow.sh");
@@ -338,6 +341,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
     async fn test_execute_hook_working_directory() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("cwd_marker.txt");

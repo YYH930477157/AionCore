@@ -19,6 +19,12 @@ use crate::types::{
     ContentUpdateEvent, ContentUpdateOperation, CopyResult, DirOrFile, FileMetadata, WorkspaceFlatFile,
 };
 
+/// Repository-relative paths cross the wire with `/` separators on every platform: a Windows
+/// client must not have to compare `src\\main.rs` against `src/main.rs`.
+fn relative_slash(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 /// Maximum number of files returned by `list_workspace_files`.
 const MAX_WORKSPACE_FILES: usize = 20_000;
 
@@ -142,7 +148,7 @@ fn build_dir_tree_sync(dir: &Path, root: &Path) -> Result<Vec<DirOrFile>, FileEr
         let name = entry.file_name().to_string_lossy().into_owned();
 
         let full_path = strip_verbatim_prefix(&path.to_string_lossy());
-        let relative_path = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().into_owned();
+        let relative_path = relative_slash(path.strip_prefix(root).unwrap_or(&path));
 
         let is_dir = metadata.is_dir();
 
@@ -189,7 +195,7 @@ fn read_children_sync(dir: &Path, root: &Path) -> Result<Vec<DirOrFile>, FileErr
         let name = entry.file_name().to_string_lossy().into_owned();
 
         let full_path = strip_verbatim_prefix(&path.to_string_lossy());
-        let relative_path = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().into_owned();
+        let relative_path = relative_slash(path.strip_prefix(root).unwrap_or(&path));
 
         children.push(DirOrFile {
             name,
@@ -246,7 +252,7 @@ fn list_workspace_files_sync(root: &Path) -> Result<Vec<WorkspaceFlatFile>, File
             .unwrap_or_default();
 
         let full_path = strip_verbatim_prefix(&path.to_string_lossy());
-        let relative_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+        let relative_path = relative_slash(path.strip_prefix(root).unwrap_or(path));
 
         files.push(WorkspaceFlatFile {
             name,
@@ -737,11 +743,11 @@ impl crate::traits::IFileService for FileService {
 
         // Compute relative path from workspace
         let workspace_path = Path::new(workspace);
-        let relative_path = canonical
-            .strip_prefix(std::fs::canonicalize(workspace_path).unwrap_or_else(|_| workspace_path.to_path_buf()))
-            .unwrap_or(&canonical)
-            .to_string_lossy()
-            .into_owned();
+        let relative_path = relative_slash(
+            canonical
+                .strip_prefix(std::fs::canonicalize(workspace_path).unwrap_or_else(|_| workspace_path.to_path_buf()))
+                .unwrap_or(&canonical),
+        );
 
         // Build and broadcast contentUpdate event
         let content = String::from_utf8(data.to_vec()).ok();

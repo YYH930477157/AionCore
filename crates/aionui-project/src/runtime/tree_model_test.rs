@@ -221,6 +221,7 @@ async fn apply_is_idempotent_when_nothing_changed() {
     );
 }
 
+#[cfg(unix)] // the provider reports no inode on Windows, so the code documents a removed+added fallback
 #[tokio::test]
 async fn apply_synthesizes_rename_for_same_inode() {
     let (mut tree, dir) = real_tree();

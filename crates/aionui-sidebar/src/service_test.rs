@@ -240,6 +240,7 @@ fn find_pinned(resp: &aionui_api_types::SidebarResponse) -> Option<&aionui_api_t
 // -- D11 classification matrix (conversations) -------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn classifies_five_cases_for_conversations() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -320,6 +321,7 @@ async fn migrated_root_temp_workspace_still_classifies_to_chats() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn path_merge_does_not_write_the_db() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -354,6 +356,7 @@ async fn path_merge_does_not_write_the_db() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn dangling_project_id_falls_through_to_path() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -382,6 +385,7 @@ async fn dangling_project_id_falls_through_to_path() {
 // -- Archive scope: same engine, different slice (?archived) -----------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn archived_scope_reads_only_archived_without_pinned_or_spine() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -442,6 +446,7 @@ async fn archived_scope_reads_only_archived_without_pinned_or_spine() {
 // -- Teams: isomorphic classification + folding + orphan downgrade -----------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn teams_classify_and_fold_members_orphans_downgrade() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -496,6 +501,7 @@ async fn teams_classify_and_fold_members_orphans_downgrade() {
 // -- Pinned anti-join / B1 double-render -------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn pinned_item_leaves_its_natural_group() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -677,6 +683,7 @@ async fn pinned_group_hides_a_conversation_that_became_a_live_team_member() {
 // -- Cross-user scoping (BR-24) ----------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn first_screen_is_user_scoped() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -951,6 +958,7 @@ async fn user_order_count(pool: &SqlitePool, user: &str, item_id: &str) -> i64 {
 /// members) all go; unrelated dir/chats rows stay. Pinned rows are included
 /// (pinning only hoists display) and their `user_order` rows are cleaned up.
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn remove_project_deletes_the_visible_construct_and_orphan_rows() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -1051,6 +1059,7 @@ async fn remove_project_deletes_the_visible_construct_and_orphan_rows() {
 /// A failing port call does not abort the sweep: siblings still delete and the
 /// reported count reflects only the successes.
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn remove_project_is_best_effort_on_port_failure() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -1553,6 +1562,7 @@ async fn seed_project_construct(fx: &Fixture) {
 /// path-merged conv, team + folded members sharing one `now`), unpins each (D6),
 /// and leaves unrelated dir/chats rows in the active slice.
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn archive_project_archives_the_visible_construct_and_unpins() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -1607,6 +1617,7 @@ async fn archive_project_archives_the_visible_construct_and_unpins() {
 /// A different user's standard project, and a temp project, are both `ScopeGone`
 /// for `archive_project` — nothing is touched.
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn archive_project_on_missing_or_nonstandard_scope_is_scope_gone() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -1634,6 +1645,7 @@ async fn archive_project_on_missing_or_nonstandard_scope_is_scope_gone() {
 /// `unarchive_project` restores the whole archived construct in one call: bound +
 /// path-merged conv and the team + members return to the active slice.
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn unarchive_project_restores_the_archived_construct() {
     let fx = fixture().await;
     let pool = fx.pool();
@@ -1671,6 +1683,7 @@ async fn unarchive_project_restores_the_archived_construct() {
 /// (team cascades to members), **keeps the project record**, and never reaches
 /// the active slice.
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures: the helper builds file:/// absolute paths")]
 async fn delete_archived_project_removes_archived_units_keeps_record() {
     let fx = fixture().await;
     let pool = fx.pool();

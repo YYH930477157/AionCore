@@ -169,6 +169,7 @@ async fn sse_401_returns_needs_auth() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "spawns POSIX commands")]
 async fn stdio_timeout_returns_timeout_error() {
     // Use `sleep` which produces no stdout — our protocol read will block
     let svc = make_service_with_timeout(Duration::from_secs(1));
@@ -285,6 +286,7 @@ async fn http_custom_headers_are_sent() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "spawns POSIX commands")]
 async fn stdio_with_args_spawns_correctly() {
     // Use echo as a simple command that exits immediately
     // Since echo doesn't speak MCP, we expect a protocol error (not a spawn error)

@@ -882,6 +882,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "spawns POSIX commands or asserts POSIX path semantics")]
     async fn stale_managed_runtime_cache_is_evicted_when_root_is_deleted() {
         let _guard = test_managed_runtime_cache_lock().lock().await;
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -907,6 +908,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "spawns POSIX commands or asserts POSIX path semantics")]
     async fn cached_managed_runtime_emits_ready_after_validation() {
         let _guard = test_managed_runtime_cache_lock().lock().await;
         let tmp = tempfile::tempdir().expect("tempdir");

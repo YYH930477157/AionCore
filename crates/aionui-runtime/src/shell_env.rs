@@ -457,6 +457,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "spawns POSIX commands or asserts POSIX path semantics")]
     fn platform_extra_bins_at_filters_nonexistent() {
         let tmp = tempfile::TempDir::new().unwrap();
         let home = tmp.path();

@@ -397,6 +397,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "spawns POSIX sh/pwd; the registry falls back to cmd on Windows")]
     async fn create_runs_command_and_reports_output_and_exit() {
         let reg = TerminalRegistry::new("conv-t", None);
         let id = reg.create(params("echo", &["hello_term"])).await.unwrap();
@@ -410,6 +411,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "spawns POSIX sh/pwd; the registry falls back to cmd on Windows")]
     async fn output_byte_limit_truncates_from_front() {
         let reg = TerminalRegistry::new("conv-t", None);
         let mut p = params("sh", &["-c", "printf 'AAAA'; printf 'BBBB'"]);
@@ -422,6 +424,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "spawns POSIX sh/pwd; the registry falls back to cmd on Windows")]
     async fn kill_terminates_long_command_with_signal() {
         let reg = TerminalRegistry::new("conv-t", None);
         let id = reg.create(params("sleep", &["30"])).await.unwrap();
@@ -435,6 +438,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "spawns POSIX sh/pwd; the registry falls back to cmd on Windows")]
     async fn release_is_idempotent_and_kill_all_clears() {
         let reg = TerminalRegistry::new("conv-t", None);
         let id1 = reg.create(params("sleep", &["30"])).await.unwrap();
@@ -455,6 +459,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "spawns POSIX sh/pwd; the registry falls back to cmd on Windows")]
     async fn bare_compound_command_runs_through_shell() {
         let reg = TerminalRegistry::new("conv-t", None);
         let mut p = params("true && echo shell_interpreted", &[]);
@@ -467,6 +472,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "spawns POSIX sh/pwd; the registry falls back to cmd on Windows")]
     async fn background_child_holding_stdout_does_not_hang_exit() {
         // B6: `sh -c 'sleep 30 &'` — the parent exits immediately but the
         // backgrounded child inherits the stdout pipe, so the read side never
@@ -486,6 +492,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "spawns POSIX sh/pwd; the registry falls back to cmd on Windows")]
     async fn default_cwd_applies_when_agent_sends_none() {
         // A private temp dir per run: the old fixed, shared path
         // (`temp_dir()/aionui-term-cwd-test`) was raced by every parallel test

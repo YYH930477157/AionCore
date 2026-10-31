@@ -705,6 +705,10 @@ async fn repositories_changed_stops_after_the_session_disconnects() {
 /// pe_id` renders whitespace. Reverting `build_folder_dto` to a non-trim filter
 /// turns this red — which is also what proves the defect was real.
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "fixture needs a directory named only spaces, which NTFS normalizes away"
+)]
 async fn a_blank_basename_folder_does_not_become_a_blank_label() {
     let fx = fixture().await;
 

@@ -219,6 +219,7 @@ async fn persistent_npm_version_failure_still_reports_bundled_resource_invalid()
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "spawns POSIX commands or asserts POSIX path semantics")]
 async fn managed_runtime_validation_uses_real_commands() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("node-v24.11.0-test");
@@ -458,6 +459,7 @@ fn managed_runtime_checksum_verification_detects_mismatch() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "spawns POSIX commands or asserts POSIX path semantics")]
 fn managed_runtime_injects_npm_state_under_runtime_root() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("node-v24.11.0-test");

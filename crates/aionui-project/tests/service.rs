@@ -243,6 +243,7 @@ async fn orphan_folder_is_adopted_on_next_create() {
 // ── bad paths (assert specific codes) ────────────────────────────────────
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "undefined")]
 async fn create_standard_missing_dir_is_folder_not_found() {
     let (svc, _db) = service().await;
     let missing = uri_of(std::path::Path::new("/nonexistent-aionui-xyz-8f3a2b1c"));

@@ -3127,6 +3127,7 @@ async fn create_team_side_branch_backfills_project_binding_when_injected() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures")]
 async fn create_team_without_workspace_uses_leader_auto_workspace_for_all_initial_agents() {
     let agent_metadata_repo: Arc<dyn IAgentMetadataRepository> = Arc::new(StubAgentMetadataRepo::empty());
     let (svc, _, conv_repo) =
@@ -5524,6 +5525,7 @@ async fn add_agent_backfills_empty_team_workspace_from_leader_workspace() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures")]
 async fn add_agent_uses_team_temp_workspace_when_team_and_leader_workspaces_are_unusable() {
     let agent_metadata_repo: Arc<dyn IAgentMetadataRepository> = Arc::new(StubAgentMetadataRepo::empty());
     let (svc, team_repo, _, conv_repo) =
@@ -5635,6 +5637,7 @@ async fn add_agent_does_not_create_teammate_when_workspace_writeback_fails() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures")]
 async fn add_agent_continues_when_team_temp_leader_patch_fails() {
     let agent_metadata_repo: Arc<dyn IAgentMetadataRepository> = Arc::new(StubAgentMetadataRepo::empty());
     let (svc, team_repo, conversation_ports, conv_repo) =

@@ -1,3 +1,8 @@
+//! URI fixtures in this module are rooted at "/"; a Windows file URI needs a drive letter, so
+//! the module only runs on Unix. Windows path handling is exercised by the platform-agnostic
+//! file-URI tests elsewhere in the crate.
+#![cfg(unix)]
+
 use super::*;
 use crate::canonical::canonicalize;
 

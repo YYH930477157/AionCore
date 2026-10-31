@@ -39,6 +39,7 @@ fn setup_ext_dir() -> TempDir {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
 async fn lh1_first_install_executes_on_install() {
     let dir = setup_ext_dir();
     let marker = dir.path().join("installed.marker");
@@ -67,6 +68,7 @@ async fn lh1_first_install_executes_on_install() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
 async fn lh2_version_change_executes_on_install() {
     let dir = setup_ext_dir();
     let marker = dir.path().join("upgraded.marker");
@@ -104,6 +106,7 @@ fn lh2_same_version_skips_install() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
 async fn lh3_activate_executes_on_activate() {
     let dir = setup_ext_dir();
     let counter_file = dir.path().join("activate_count.txt");
@@ -139,6 +142,7 @@ async fn lh3_activate_executes_on_activate() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
 async fn lh4_deactivate_executes_on_deactivate() {
     let dir = setup_ext_dir();
     let marker = dir.path().join("deactivated.marker");
@@ -164,6 +168,7 @@ async fn lh4_deactivate_executes_on_deactivate() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
 async fn lh5_hook_timeout() {
     let dir = setup_ext_dir();
     // Script that sleeps for a long time
@@ -230,6 +235,7 @@ fn resolve_hook_path_none_when_not_declared() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
 async fn hook_nonzero_exit_returns_hook_failed() {
     let dir = setup_ext_dir();
     write_script(dir.path(), "scripts/fail.sh", "echo 'setup failed' >&2; exit 42");
@@ -257,6 +263,7 @@ async fn hook_nonzero_exit_returns_hook_failed() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
 async fn hook_working_directory_is_ext_dir() {
     let dir = setup_ext_dir();
     write_script(dir.path(), "check_dir.sh", "pwd > cwd_out.txt");

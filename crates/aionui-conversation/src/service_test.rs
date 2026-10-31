@@ -2023,6 +2023,7 @@ fn create_team_temp_workspace_uses_date_partition() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures")]
 async fn create_rejects_unavailable_workspace_with_trailing_whitespace_in_request() {
     let (svc, _broadcaster, _repo, _task_mgr) = make_service();
     let dir = std::env::temp_dir().join(format!("aionui-test-{}", aionui_common::generate_short_id()));

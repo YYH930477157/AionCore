@@ -384,6 +384,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Linux-only behaviour")]
     fn linux_show_item_percent_encodes_spaces_in_uri() {
         let path = Path::new("/home/user/My Downloads/AionUi.deb");
         let (program, args) = linux_show_item_command(path, true);

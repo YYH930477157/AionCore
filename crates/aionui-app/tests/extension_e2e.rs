@@ -1366,6 +1366,7 @@ async fn skill_import_returns_specific_code_for_oversized_file() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore = "POSIX path fixtures")]
 async fn skill_batch_import_reports_partial_failures_without_rolling_back_successes() {
     let tmp = TempDir::new().unwrap();
     let (mut app, services, paths) = build_app_with_skill_paths(tmp.path()).await;

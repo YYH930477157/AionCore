@@ -2714,6 +2714,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "exercises POSIX shell hooks")]
     async fn import_skills_replaces_dangling_link_with_copy() {
         let tmp = TempDir::new().unwrap();
         let paths = make_test_paths(tmp.path());

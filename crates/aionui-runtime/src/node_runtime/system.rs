@@ -52,6 +52,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "spawns POSIX commands or asserts POSIX path semantics")]
     fn mixed_roots_are_rejected() {
         let root = tempfile::tempdir().unwrap();
         let node_root = root.path().join("node-a");

@@ -1259,6 +1259,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "POSIX path fixtures")]
     fn is_auto_workspace_matches_by_structure_across_user_and_date() {
         let root = std::path::Path::new("/w");
         let user = "user_019f8de8-3537-7c73-8d92-3bfde17eb1ee";
