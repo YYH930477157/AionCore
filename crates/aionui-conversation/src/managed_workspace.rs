@@ -4,7 +4,7 @@ use crate::error::ConversationError;
 use aionui_ai_agent::{AgentInstance, types::AionrsWorkspaceRoot};
 use aionui_common::AgentType;
 use aionui_db::models::ConversationRow;
-use aionui_project::{ManagedWorkspaceRuntime, ProjectService, RuntimeStatus};
+use aionui_project::{ManagedWorkspaceRuntime, ProjectError, ProjectService, RuntimeStatus};
 use std::sync::Arc;
 use tokio::sync::OwnedRwLockReadGuard;
 
@@ -82,10 +82,11 @@ impl ConversationService {
         let (Some(service), Some(project_id)) = (self.workspace_service(), row.project_id.as_deref()) else {
             return Ok(None);
         };
-        service
-            .managed_workspace(&row.user_id, project_id)
-            .await
-            .map_err(|err| ConversationError::bad_request(err.to_string()))
+        match service.managed_workspace(&row.user_id, project_id).await {
+            // Removing a project leaves its archived conversations bound to the old id.
+            Err(ProjectError::ProjectNotFound { .. }) => Ok(None),
+            result => result.map_err(|err| ConversationError::bad_request(err.to_string())),
+        }
     }
 
     pub(crate) async fn managed_workspace_bootstrap(

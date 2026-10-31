@@ -237,6 +237,50 @@ async fn managed_workspace_binding_empty_and_missing_default_can_initialize() {
 }
 
 #[tokio::test]
+async fn conversation_of_a_removed_project_still_starts() {
+    let temp = tempfile::tempdir().unwrap();
+    let (svc, _, repo, _) = make_service_with_workspace_root(temp.path().to_path_buf());
+    let projects = make_injected_project_service(temp.path()).await;
+    svc.with_project_service(projects.clone());
+    let folder = tempfile::tempdir().unwrap();
+    let req = serde_json::from_value(json!({"type":"aionrs", "extra": {
+        "workspace": folder.path().to_string_lossy(),
+    }}))
+    .unwrap();
+    let conv = svc.create("user_1", req).await.unwrap();
+    let mut row = repo.get("user_1", &conv.id).await.unwrap().unwrap();
+    // Removal skips archived conversations, so they keep the id of a project that is gone.
+    row.project_id = Some("project_removed".into());
+
+    assert!(svc.build_task_options(&row).await.is_ok());
+    assert!(svc.acquire_conversation_workspace(&row).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn conversation_of_a_removed_managed_workspace_still_starts() {
+    let temp = tempfile::tempdir().unwrap();
+    let (svc, _, repo, _) = make_service_with_workspace_root(temp.path().to_path_buf());
+    let projects = make_injected_project_service(temp.path()).await;
+    svc.with_project_service(projects.clone());
+    let workspace = projects
+        .create_workspace(
+            "user_1",
+            CreateWorkspaceRequest {
+                name: "No default".into(),
+                uri: None,
+            },
+        )
+        .await
+        .unwrap();
+    let conv = svc.create("user_1", managed_request(&workspace.id)).await.unwrap();
+    let row = repo.get("user_1", &conv.id).await.unwrap().unwrap();
+    projects.delete_project("user_1", &workspace.id).await.unwrap();
+
+    assert!(svc.build_task_options(&row).await.is_ok());
+    assert!(svc.acquire_conversation_workspace(&row).await.unwrap().is_none());
+}
+
+#[tokio::test]
 async fn managed_workspace_binding_lease_lasts_until_cancelled_task_finishes() {
     let temp = tempfile::tempdir().unwrap();
     let (svc, _, _, _) = make_service_with_workspace_root(temp.path().to_path_buf());
