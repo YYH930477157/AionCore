@@ -1431,7 +1431,7 @@ async fn skill_batch_import_reports_partial_failures_without_rolling_back_succes
         .unwrap()
         .expect("imported skill row should exist for the importing user");
     assert!(
-        alpha_row.path.contains("/skills/users/"),
+        std::path::Path::new(&alpha_row.path).starts_with(paths.user_skills_dir.join("users")),
         "import must use user-scoped storage: {}",
         alpha_row.path
     );

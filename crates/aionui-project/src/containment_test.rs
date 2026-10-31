@@ -6,23 +6,34 @@
 use super::*;
 use crate::canonical::canonicalize;
 
+const ROOT_URI: &str = if cfg!(windows) {
+    "file:///C:/work/proj"
+} else {
+    "file:///work/proj"
+};
+
 fn root() -> Canonical {
-    canonicalize("file:///work/proj").unwrap()
+    canonicalize(ROOT_URI).unwrap()
 }
 
 #[test]
 fn resolves_normal_child_path() {
     let r = resolve_relative(&root(), "src/main.rs", FileOp::Read).unwrap();
     assert_eq!(r.relative_path, "src/main.rs");
-    assert_eq!(r.resource_uri, "file:///work/proj/src/main.rs");
-    assert_eq!(r.absolute_path.unwrap().to_string_lossy(), "/work/proj/src/main.rs");
+    assert_eq!(r.resource_uri, format!("{ROOT_URI}/src/main.rs"));
+    let expected = if cfg!(windows) {
+        "C:/work/proj/src/main.rs"
+    } else {
+        "/work/proj/src/main.rs"
+    };
+    assert_eq!(r.absolute_path.unwrap(), std::path::Path::new(expected));
 }
 
 #[test]
 fn empty_relative_is_root_itself() {
     let r = resolve_relative(&root(), "", FileOp::Browse).unwrap();
     assert_eq!(r.relative_path, "");
-    assert_eq!(r.resource_uri, "file:///work/proj");
+    assert_eq!(r.resource_uri, ROOT_URI);
 }
 
 #[test]

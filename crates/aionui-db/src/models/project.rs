@@ -1,6 +1,22 @@
 use aionui_common::TimestampMs;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct WorkspaceRow {
+    pub project_id: String,
+    pub config_path: Option<String>,
+    pub dirty: bool,
+    pub default_pe_id: Option<String>,
+    pub saved_json: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceEntryInput {
+    pub pe_id: String,
+    pub folder_id: String,
+    pub display_name: Option<String>,
+}
+
 /// Project kind, stored as the TEXT `projects.kind` column.
 ///
 /// Column values follow existing crate convention (TEXT + service-layer
@@ -74,14 +90,6 @@ pub struct ProjectRow {
     pub kind: String,
     pub created_at: TimestampMs,
     pub updated_at: TimestampMs,
-    /// 1 for a managed multi-root workspace, 0 for the legacy single-root project.
-    pub workspace_managed: i64,
-    /// Configuration file this workspace was opened from / last saved to.
-    pub workspace_config_path: Option<String>,
-    /// Root new conversations start in; NULL falls back to the first root.
-    pub workspace_default_pe_id: Option<String>,
-    /// 1 when the stored roots differ from what `workspace_config_path` holds.
-    pub workspace_dirty: i64,
 }
 
 /// Row mapping for the `folders` table.

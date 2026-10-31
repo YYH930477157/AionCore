@@ -17,13 +17,11 @@ pub mod runtime;
 pub mod scm;
 mod service;
 pub mod types;
-pub mod workspace;
 
 pub use chat_files::ResolvedChatMessage;
 pub use routes::{ProjectRouterState, project_routes};
-pub use service::ProjectService;
+pub use service::{ManagedWorkspaceRuntime, ProjectService, WorkspaceRuntimeRoot};
 pub use types::{
     AttachInput, FileOp, FolderDto, ProjectDetail, ProjectError, ProjectExplorerEntry, ProjectExplorerView,
-    ReferenceInput, ResolveOutput, ResolvedResource, RuntimeStatus, WorkspaceState,
+    ReferenceInput, ResolveOutput, ResolvedResource, RuntimeStatus,
 };
-pub use workspace::{WorkspaceFile, WorkspaceFileRoot, WorkspaceRootInput, WorkspaceUpdateInput};

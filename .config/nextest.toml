@@ -1,0 +1,4 @@
+[profile.default]
+# Report every failure in one full pre-push run. Failed tests still fail the
+# recipe and prevent pushing; this only disables early cancellation.
+fail-fast = false

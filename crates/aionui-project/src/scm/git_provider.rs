@@ -865,7 +865,10 @@ fn revert_paths(repo: &Repository, rels: &[String], trash: &dyn TrashSink) -> Re
         // files their restore.
         for (index, rel) in &tracked {
             let mut builder = git2::build::CheckoutBuilder::new();
-            builder.force().remove_untracked(false).update_index(false);
+            // Preserve the staged blobs while refreshing their checkout stat data.
+            // With autocrlf, the restored work-tree size differs from the index blob;
+            // suppressing this update leaves libgit2 reporting a phantom unstaged edit.
+            builder.force().remove_untracked(false).update_index(true);
             builder.path(rel.as_str());
             // `None` = the repository's own index.
             if let Err(err) = repo.checkout_index(None, Some(&mut builder)) {

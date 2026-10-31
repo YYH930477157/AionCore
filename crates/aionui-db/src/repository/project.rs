@@ -1,14 +1,7 @@
 use async_trait::async_trait;
 
 use crate::error::DbError;
-use crate::models::{FolderRow, ProjectExplorerRow, ProjectKind, ProjectRow, Role};
-
-/// One ordered root of a managed workspace: the folder to bind and the optional user label.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RootSpec {
-    pub folder_id: String,
-    pub display_name: Option<String>,
-}
+use crate::models::{FolderRow, ProjectExplorerRow, ProjectKind, ProjectRow};
 
 /// Access boundary for the three project-bind tables (`projects`, `folders`,
 /// `project_explorer`).
@@ -24,6 +17,17 @@ pub struct RootSpec {
 /// user can neither see nor mutate another user's projects.
 #[async_trait]
 pub trait IProjectStore: Send + Sync {
+    async fn get_workspace(&self, user_id: &str, project_id: &str) -> Result<Option<crate::WorkspaceRow>, DbError>;
+
+    /// Atomically insert/promote/update a managed project and its complete draft.
+    /// Existing project and entry identities must belong to this owner/project.
+    async fn put_workspace(
+        &self,
+        user_id: &str,
+        name: &str,
+        workspace: &crate::WorkspaceRow,
+        roots: &[crate::WorkspaceEntryInput],
+    ) -> Result<(), DbError>;
     /// `INSERT OR IGNORE` a folder keyed by `canonical`, then `SELECT` it.
     /// Idempotent: on an existing canonical the row is returned unchanged
     /// (`resource_uri` keeps its first-insert value, `updated_at` is not bumped).
@@ -87,41 +91,4 @@ pub trait IProjectStore: Send + Sync {
         pe_id: &str,
         display_name: Option<&str>,
     ) -> Result<ProjectExplorerRow, DbError>;
-
-    /// Create a project row with no explorer entry. Managed workspaces start without roots and
-    /// gain them through [`IProjectStore::replace_roots`]; the legacy paths keep using
-    /// [`IProjectStore::create_project_with_workspace_entry`].
-    async fn create_project(
-        &self,
-        user_id: &str,
-        name: &str,
-        kind: ProjectKind,
-        managed: bool,
-    ) -> Result<ProjectRow, DbError>;
-
-    async fn rename_project(&self, user_id: &str, project_id: &str, name: &str) -> Result<(), DbError>;
-
-    /// Persist the managed-workspace binding: the configuration file it was opened from or last
-    /// saved to, its default root, and whether the stored roots have unsaved changes.
-    async fn set_workspace_state(
-        &self,
-        user_id: &str,
-        project_id: &str,
-        config_path: Option<&str>,
-        default_pe_id: Option<&str>,
-        dirty: bool,
-    ) -> Result<(), DbError>;
-
-    /// Make `roots` the project's complete, ordered explorer entry list, in one transaction.
-    ///
-    /// Entries whose folder survives keep their `pe_id` (the frontend keys tabs and `fs`
-    /// subscriptions on it), so re-saving a workspace does not orphan open editors; entries whose
-    /// folder is gone are removed, and new folders are appended in the given order.
-    async fn replace_roots(
-        &self,
-        user_id: &str,
-        project_id: &str,
-        roots: &[RootSpec],
-        role: Role,
-    ) -> Result<Vec<ProjectExplorerRow>, DbError>;
 }

@@ -65,6 +65,33 @@ pub(crate) struct SubscriptionRegistry {
 }
 
 impl SubscriptionRegistry {
+    /// Drop stale identities directly, without resolving them through a DB
+    /// whose root paths have already changed. Other projects can share nodes.
+    pub fn drop_roots(&mut self, pe_ids: &[String], now: Millis) {
+        let roots: HashSet<_> = pe_ids.iter().collect();
+        let mut emptied = Vec::new();
+        for (canonical, subscribers) in &mut self.reverse {
+            subscribers.retain(|sub| !roots.contains(&sub.pe_id));
+            if subscribers.is_empty() {
+                emptied.push(canonical.clone());
+            }
+        }
+        for canonical in emptied {
+            self.reverse.remove(&canonical);
+            self.grace.insert(canonical, now + GRACE_TTL_MS);
+        }
+        // Rebuild the small forward index so multiple pe IDs sharing one
+        // canonical on the same session remain registered correctly.
+        self.forward.clear();
+        for (canonical, subscribers) in &self.reverse {
+            for subscriber in subscribers {
+                self.forward
+                    .entry(subscriber.session.clone())
+                    .or_default()
+                    .insert(canonical.clone());
+            }
+        }
+    }
     pub fn new() -> Self {
         Self::default()
     }

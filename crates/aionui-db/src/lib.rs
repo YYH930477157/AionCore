@@ -31,7 +31,7 @@ pub use models::{
     SkillImportRecordRow, SkillRow, UpdateAgentAvailabilitySnapshotParams, UpdateAgentHandshakeParams,
     UpdateAssistantParams, UpsertAgentMetadataParams, UpsertAssistantDefinitionParams, UpsertAssistantOverlayParams,
     UpsertAssistantPreferenceParams, UpsertConversationAssistantSnapshotParams, UpsertOverrideParams, UserOrderRow,
-    UserStatus, UserType,
+    UserStatus, UserType, WorkspaceEntryInput, WorkspaceRow,
 };
 pub use repository::channel::UpdatePluginStatusParams;
 pub use repository::conversation::{
@@ -55,8 +55,8 @@ pub use repository::{
     IClientPreferenceRepository, IConversationRepository, ICronRepository, IFeedbackDiagnosticsRepository,
     IMcpServerRepository, IOAuthTokenRepository, IProjectStore, IProviderRepository, IRemoteAgentRepository,
     ISettingsRepository, ISidebarStore, ISkillRepository, ITeamRepository, IUserOrderStore, IUserRepository,
-    MoveOutcome, OrderItemRef, PageDirection, PersistedSessionState, PinOutcome, PinnedCursor, RootSpec,
-    SaveRuntimeStateParams, SidebarConversationThin, SidebarProjectMeta, SidebarTeamThin, SqliteAcpSessionRepository,
+    MoveOutcome, OrderItemRef, PageDirection, PersistedSessionState, PinOutcome, PinnedCursor, SaveRuntimeStateParams,
+    SidebarConversationThin, SidebarProjectMeta, SidebarTeamThin, SqliteAcpSessionRepository,
     SqliteAgentMetadataRepository, SqliteAssistantDefinitionRepository, SqliteAssistantOverlayRepository,
     SqliteAssistantOverrideRepository, SqliteAssistantPreferenceRepository, SqliteAssistantRepository,
     SqliteChannelRepository, SqliteClientPreferenceRepository, SqliteConversationRepository, SqliteCronRepository,

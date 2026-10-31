@@ -65,13 +65,13 @@ aionui-cron = { path = "crates/aionui-cron" }
 aionui-assistant = { path = "crates/aionui-assistant" }
 aionui-app = { path = "crates/aionui-app" }
 
-# Woody's aionrs fork: upstream v0.2.11 plus per-call usage reporting (OutputSink::emit_usage).
-aion-agent = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
-aion-providers = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
-aion-types = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
-aion-protocol = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
-aion-config = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
-aion-mcp = { git = "https://github.com/YYH930477157/aionrs.git", tag = "v0.2.11-woody.1" }
+# Woody's workspace-aware runtime, pinned so a clean checkout builds the same SDK.
+aion-agent = { git = "https://github.com/YYH930477157/aionrs.git", rev = "72c1f37f51f5b0d49e00b0fbd654ff4bf47368e5" }
+aion-providers = { git = "https://github.com/YYH930477157/aionrs.git", rev = "72c1f37f51f5b0d49e00b0fbd654ff4bf47368e5" }
+aion-types = { git = "https://github.com/YYH930477157/aionrs.git", rev = "72c1f37f51f5b0d49e00b0fbd654ff4bf47368e5" }
+aion-protocol = { git = "https://github.com/YYH930477157/aionrs.git", rev = "72c1f37f51f5b0d49e00b0fbd654ff4bf47368e5" }
+aion-config = { git = "https://github.com/YYH930477157/aionrs.git", rev = "72c1f37f51f5b0d49e00b0fbd654ff4bf47368e5" }
+aion-mcp = { git = "https://github.com/YYH930477157/aionrs.git", rev = "72c1f37f51f5b0d49e00b0fbd654ff4bf47368e5" }
 
 # Core framework
 tokio = { version = "1", features = ["full"] }

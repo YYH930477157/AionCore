@@ -60,12 +60,12 @@ mod tests {
 
         std::fs::create_dir_all(node_root.join("bin")).unwrap();
         std::fs::create_dir_all(npm_root.join("bin")).unwrap();
-        std::fs::write(node_root.join("bin/node"), b"").unwrap();
+        std::fs::write(node_root.join(if cfg!(windows) { "node.exe" } else { "bin/node" }), b"").unwrap();
         std::fs::write(node_root.join("bin/npx"), b"").unwrap();
         std::fs::write(npm_root.join("bin/npm"), b"").unwrap();
 
         let err = validate_same_root(
-            &node_root.join("bin/node"),
+            &node_root.join(if cfg!(windows) { "node.exe" } else { "bin/node" }),
             &npm_root.join("bin/npm"),
             &node_root.join("bin/npx"),
         )

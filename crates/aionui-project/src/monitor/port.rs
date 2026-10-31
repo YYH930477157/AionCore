@@ -25,6 +25,8 @@ pub trait FsWirePush: Send + Sync {
 /// An inbound event delivered to the actor from the transport layer.
 #[derive(Debug, Clone)]
 pub enum FsInbound {
+    /// Root IDs removed or relocated after a successful project DB transaction.
+    InvalidateRoots { pe_ids: Vec<String> },
     /// An outer-envelope `fs` frame's payload (the inner JSON-RPC value).
     /// `user_id` is the connection's authenticated Core user (resolved at WS
     /// connect); every user-scoped resolve in the actor is gated on it.

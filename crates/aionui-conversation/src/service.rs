@@ -1,3 +1,6 @@
+#[path = "managed_workspace.rs"]
+mod managed_workspace;
+
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -1112,6 +1115,10 @@ impl ConversationService {
             warn!("aionrs create: stripped legacy `extra.model`; top-level `model` is canonical");
         }
 
+        let workspace_binding = self
+            .prepare_workspace_binding(user_id, effective_type, &mut extra)
+            .await?;
+
         // Determine whether the user chose this workspace ("custom") or we
         // auto-provision one under
         // `{data_dir}/conversations/YYYY/MM/DD/{label}-temp-{id}/`.
@@ -1144,7 +1151,7 @@ impl ConversationService {
         // Statement, not a binding: the path itself is no longer needed now that
         // skill delivery does not write into the workspace. The side effects still
         // are -- creating the directory and recording it in `extra.workspace`.
-        if user_supplied_workspace.is_none() {
+        if user_supplied_workspace.is_none() && workspace_binding.is_none() {
             // Per-conversation temp workspaces live under
             // `{data_dir}/conversations/YYYY/MM/DD/{label}-temp-{id}/`.
             // The label lets operators eyeball the agent type; the
@@ -1441,7 +1448,7 @@ impl ConversationService {
             pinned_at: None,
             created_at: now,
             updated_at: now,
-            project_id: None,
+            project_id: workspace_binding.as_ref().map(|(id, _lease)| id.clone()),
             folder_id: None,
             // Create never claims name ownership: even a request-supplied name
             // is the frontend's first-message placeholder, so agents may
@@ -1453,10 +1460,11 @@ impl ConversationService {
 
         // Project-bind side branch (best-effort; never affects creation).
         // Uses the workspace the existing flow already decided + created.
-        if let Some(workspace) = extra
-            .get("workspace")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
+        if workspace_binding.is_none()
+            && let Some(workspace) = extra
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
         {
             self.bind_project_best_effort(user_id, &id, workspace).await;
         }
@@ -2284,6 +2292,15 @@ impl ConversationService {
             .ok_or_else(|| ConversationError::NotFound { id: id.to_owned() })?;
 
         let existing_type: AgentType = string_to_enum(&existing.r#type)?;
+
+        if let Some(id) = req.extra.as_ref().and_then(|extra| extra.get("workspace_project_id")) {
+            let previous: serde_json::Value = serde_json::from_str(&existing.extra).unwrap_or_default();
+            if previous.get("workspace_project_id") != Some(id) {
+                return Err(ConversationError::bad_request(
+                    "workspace identity cannot be changed through conversation.extra",
+                ));
+            }
+        }
 
         // Snapshot invariant: once written at create time, `extra.skills`
         // must not be re-shaped by PATCH. The frontend must clone the
@@ -3845,6 +3862,7 @@ impl ConversationService {
         }
 
         reject_deprecated_runtime_row(&row)?;
+        let workspace_lease = self.acquire_conversation_workspace(&row).await?;
 
         // `@@` references resolve at the same boundary and with the same
         // atomicity as file attachments. Sender workspace comes from the row so
@@ -4041,6 +4059,7 @@ impl ConversationService {
             stored_workspace,
             turn_id: turn_id.clone(),
             turn_claim,
+            workspace_lease,
         });
 
         info!(
@@ -4078,6 +4097,7 @@ impl ConversationService {
             })?;
 
         reject_deprecated_runtime_row(&row)?;
+        let workspace_lease = self.acquire_conversation_workspace(&row).await?;
 
         let turn_id = Self::mint_turn_id();
         let turn_claim = self.runtime_state.try_claim_turn(&request.conversation_id, &turn_id)?;
@@ -4163,6 +4183,7 @@ impl ConversationService {
                 stored_workspace,
                 turn_id: turn_id.clone(),
                 turn_claim,
+                workspace_lease,
             })
             .await;
 
@@ -4808,9 +4829,17 @@ impl ConversationService {
     ) -> Result<BuildTaskOptions, ConversationError> {
         reject_deprecated_runtime_row(row)?;
         let seed = self.load_aionrs_permission_seed(row).await?;
-        SessionContextBuilder::new(&self.workspace_root, &self.agent_metadata_repo, &self.acp_session_repo)
-            .build_options(row, seed)
-            .await
+        let workspace = self.managed_workspace_bootstrap(row).await?;
+        let builder =
+            SessionContextBuilder::new(&self.workspace_root, &self.agent_metadata_repo, &self.acp_session_repo);
+        match workspace.as_deref() {
+            Some(path) => {
+                builder
+                    .build_options_with_workspace_override(row, Some(path), seed)
+                    .await
+            }
+            None => builder.build_options(row, seed).await,
+        }
     }
 
     pub async fn build_task_options_for_runtime(
@@ -4820,8 +4849,9 @@ impl ConversationService {
     ) -> Result<BuildTaskOptions, ConversationError> {
         reject_deprecated_runtime_row(row)?;
         let seed = self.load_aionrs_permission_seed(row).await?;
+        let workspace = self.managed_workspace_bootstrap(row).await?;
         SessionContextBuilder::new(&self.workspace_root, &self.agent_metadata_repo, &self.acp_session_repo)
-            .build_options_with_workspace_override(row, workspace_override, seed)
+            .build_options_with_workspace_override(row, workspace.as_deref().or(workspace_override), seed)
             .await
     }
 
@@ -4928,6 +4958,9 @@ impl ConversationService {
             .await?
             .ok_or_else(|| ConversationError::internal("Conversation vanished during workspace sync"))?;
 
+        if self.conversation_workspace(&row).await?.is_some() {
+            return Ok(());
+        }
         let mut extra: serde_json::Value = serde_json::from_str(&row.extra).unwrap_or_else(|_| serde_json::json!({}));
         extra["workspace"] = serde_json::Value::String(resolved_workspace.to_owned());
 

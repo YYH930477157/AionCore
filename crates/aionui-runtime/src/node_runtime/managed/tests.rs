@@ -226,7 +226,7 @@ async fn managed_runtime_validation_uses_real_commands() {
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
 
-    let node = bin.join("node");
+    let node = managed_node_path_for_layout(&root, current_managed_node_archive_layout());
     std::fs::write(&node, "#!/bin/sh\necho v24.11.0\n").unwrap();
     #[cfg(unix)]
     {
@@ -465,9 +465,10 @@ fn managed_runtime_injects_npm_state_under_runtime_root() {
     let root = tmp.path().join("node-v24.11.0-test");
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(bin.join("node"), b"").unwrap();
-    std::fs::write(bin.join("npm"), b"").unwrap();
-    std::fs::write(bin.join("npx"), b"").unwrap();
+    let layout = current_managed_node_archive_layout();
+    write_file(&managed_node_path_for_layout(&root, layout));
+    write_file(&managed_wrapper_path_for_layout(&root, layout, "npm"));
+    write_file(&managed_wrapper_path_for_layout(&root, layout, "npx"));
 
     let runtime = runtime_from_root(&root, ResolvedNodeSource::Managed).expect("runtime");
     let env: std::collections::HashMap<_, _> = runtime

@@ -239,6 +239,31 @@ impl FsMonitorActor {
     /// Handle one inbound transport event.
     async fn on_inbound(&mut self, event: FsInbound) {
         match event {
+            FsInbound::InvalidateRoots { pe_ids } => {
+                let sessions: Vec<_> = self
+                    .active_searches
+                    .iter()
+                    .filter(|(_, search)| search.pe_ids.iter().any(|id| pe_ids.contains(id)))
+                    .map(|(session, search)| (session.clone(), search.search_id.clone()))
+                    .collect();
+                for (session, search_id) in sessions {
+                    self.drop_session_search(&session);
+                    self.push(
+                        &session,
+                        wire::error(
+                            Some(search_id),
+                            wire::CODE_PROVIDER_UNAVAILABLE,
+                            "workspace_roots_changed",
+                            serde_json::Value::Null,
+                        ),
+                    );
+                }
+                self.drive(Command::DropRoots {
+                    pe_ids,
+                    now: self.now(),
+                })
+                .await;
+            }
             FsInbound::Frame {
                 session,
                 user_id,

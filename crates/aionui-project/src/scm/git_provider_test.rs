@@ -17,9 +17,9 @@ fn init_repo(dir: &Path) -> Repository {
     let mut cfg = repo.config().expect("config");
     cfg.set_str("user.name", "scm test").expect("set name");
     cfg.set_str("user.email", "scm@test.local").expect("set email");
-    // Pin the checkout conversion: a developer machine with core.autocrlf=true would
-    // otherwise restore CRLF and break the byte comparisons below.
-    cfg.set_str("core.autocrlf", "false").expect("set autocrlf");
+    // Byte-level assertions must not inherit the developer's global CRLF policy.
+    cfg.set_bool("core.autocrlf", false)
+        .expect("disable inherited line ending conversion");
     repo
 }
 

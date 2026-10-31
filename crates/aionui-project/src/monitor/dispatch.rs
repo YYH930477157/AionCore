@@ -661,6 +661,7 @@ impl FsMonitorActor {
         self.register_search(
             session,
             ActiveSearch {
+                pe_ids: roots.iter().map(|root| root.pe_id.clone()).collect(),
                 search_id: search_id.clone(),
                 cancel: cancel.clone(),
             },

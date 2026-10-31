@@ -714,7 +714,9 @@ async fn a_blank_basename_folder_does_not_become_a_blank_label() {
 
     // A git repo whose own directory name is three spaces.
     let base = tempfile::tempdir().expect("tempdir");
-    let blank_dir = base.path().join("   ");
+    // Win32 strips ASCII spaces from basenames; Unicode whitespace exercises
+    // the same blank-label contract with a valid Windows directory name.
+    let blank_dir = base.path().join(if cfg!(windows) { "\u{3000}" } else { "   " });
     std::fs::create_dir(&blank_dir).expect("mkdir blank");
     init_committed_repo(&blank_dir);
 

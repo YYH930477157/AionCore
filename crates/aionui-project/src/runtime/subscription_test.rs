@@ -11,6 +11,21 @@ fn sub(session: &str, pe: &str, rel: &str) -> Subscriber {
 const C: &str = "file:///work/app";
 
 #[test]
+fn invalidated_roots_drop_old_subscriptions_and_keep_other_project_subscribers() {
+    let mut reg = SubscriptionRegistry::new();
+    reg.subscribe(sub("s1", "removed", ""), C, 0);
+    reg.subscribe(sub("s2", "removed", "child"), "file:///work/app/child", 0);
+    reg.subscribe(sub("s1", "kept", ""), C, 0);
+    reg.drop_roots(&["removed".into()], 10);
+    assert_eq!(
+        reg.subscribers_of(C).unwrap(),
+        &std::collections::HashSet::from([sub("s1", "kept", "")])
+    );
+    assert!(reg.subscribers_of("file:///work/app/child").is_none());
+    assert_eq!(reg.drop_session("s1", 20), vec![C.to_string()]);
+}
+
+#[test]
 fn first_subscriber_mounts_second_is_already_live() {
     let mut reg = SubscriptionRegistry::new();
     assert_eq!(reg.subscribe(sub("s1", "pe1", ""), C, 0), SubscribeOutcome::Mount);

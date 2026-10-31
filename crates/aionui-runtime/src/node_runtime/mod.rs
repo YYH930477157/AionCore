@@ -479,24 +479,32 @@ mod tests {
         }
     }
 
-    fn fake_managed_runtime(root: &std::path::Path) -> ResolvedNodeRuntime {
-        let bin = root.join("bin");
-        fs::create_dir_all(&bin).expect("create runtime bin");
-        write_executable(&bin.join("node"), "#!/bin/sh\necho v24.11.0\n");
-        write_executable(&bin.join("npm"), "#!/bin/sh\necho 24.11.0\n");
-        write_executable(&bin.join("npx"), "#!/bin/sh\necho 24.11.0\n");
-
-        ResolvedNodeRuntime {
-            source: ResolvedNodeSource::Managed,
-            root: root.to_path_buf(),
-            version: semver::Version::new(0, 0, 0),
-            node_path: bin.join("node"),
-            npm_path: bin.join("npm"),
-            npm_args_prefix: vec![],
-            npx_path: bin.join("npx"),
-            npx_args_prefix: vec![],
-            env: vec![],
+    async fn fake_managed_runtime(root: &std::path::Path) -> ResolvedNodeRuntime {
+        fs::create_dir_all(root).expect("create runtime root");
+        #[cfg(windows)]
+        {
+            // Windows needs a PE executable, not a renamed shell script. Compile
+            // a tiny version responder with the same Rust toolchain as this test.
+            let source = root.join("version_fixture.rs");
+            fs::write(&source, r#"fn main() { println!("v24.11.0"); }"#).unwrap();
+            let mut compiler = crate::Builder::clean_cli("rustc");
+            compiler.arg(&source).arg("-o").arg(root.join("node.exe"));
+            let output = compiler.output().await.expect("compile version fixture");
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            write_executable(&root.join("npm.cmd"), "@echo off\r\necho 24.11.0\r\n");
+            write_executable(&root.join("npx.cmd"), "@echo off\r\necho 24.11.0\r\n");
         }
+        #[cfg(unix)]
+        {
+            let bin = root.join("bin");
+            fs::create_dir_all(&bin).expect("create runtime bin");
+            write_executable(&bin.join("node"), "#!/bin/sh\necho v24.11.0\n");
+            write_executable(&bin.join("npm"), "#!/bin/sh\necho 24.11.0\n");
+            write_executable(&bin.join("npx"), "#!/bin/sh\necho 24.11.0\n");
+        }
+        managed::validate_managed_runtime(root, None)
+            .await
+            .expect("valid fixture runtime")
     }
 
     fn test_managed_runtime_cache_lock() -> &'static tokio::sync::Mutex<()> {
@@ -887,7 +895,7 @@ mod tests {
         let _guard = test_managed_runtime_cache_lock().lock().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path().join("node-v24.11.0-test");
-        let runtime = fake_managed_runtime(&root);
+        let runtime = fake_managed_runtime(&root).await;
         *managed_runtime_cache().lock().await = Some(runtime.clone());
 
         let cached = cached_managed_runtime_unreported()
@@ -913,7 +921,7 @@ mod tests {
         let _guard = test_managed_runtime_cache_lock().lock().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path().join("node-v24.11.0-test");
-        let runtime = fake_managed_runtime(&root);
+        let runtime = fake_managed_runtime(&root).await;
         *managed_runtime_cache().lock().await = Some(runtime.clone());
 
         let phases = Arc::new(Mutex::new(Vec::<NodeRuntimeProgressPhase>::new()));

@@ -1,4 +1,4 @@
-use aion_agent::output::{CallUsage, OutputSink};
+use aion_agent::output::{OutputSink, UsageReport};
 use tokio::sync::broadcast;
 
 use crate::protocol::events::{
@@ -156,7 +156,7 @@ impl OutputSink for BackendOutputSink {
         }));
     }
 
-    fn emit_usage(&self, usage: &CallUsage) {
+    fn emit_usage(&self, usage: &UsageReport) {
         let _ = self.event_tx.send(AgentStreamEvent::Usage(UsageEventData {
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn emit_usage_sends_the_usage_frame_the_status_bar_reads() {
         let (sink, mut rx) = make_sink();
-        sink.emit_usage(&CallUsage {
+        sink.emit_usage(&UsageReport {
             input_tokens: 1200,
             output_tokens: 300,
             cache_creation_tokens: 100,

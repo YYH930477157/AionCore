@@ -1065,6 +1065,7 @@ fn active(id: i64) -> (ActiveSearch, CancellationToken) {
     let cancel = CancellationToken::new();
     (
         ActiveSearch {
+            pe_ids: Vec::new(),
             search_id: json!(id),
             cancel: cancel.clone(),
         },
@@ -1084,6 +1085,26 @@ async fn register_search_supersedes_and_cancels_previous() {
     // Superseded search's token is cancelled; the current entry is the new id.
     assert!(first_cancel.is_cancelled());
     assert_eq!(actor.active_searches.get("1").unwrap().search_id, json!(2));
+}
+
+#[tokio::test]
+async fn invalidate_roots_cancels_only_searches_using_changed_roots() {
+    let (mut actor, _rx, push, pe, _dir, _db) = setup().await;
+    let (mut changed, changed_cancel) = active(1);
+    changed.pe_ids = vec![pe.clone()];
+    let (mut kept, kept_cancel) = active(2);
+    kept.pe_ids = vec!["other-project-root".into()];
+    actor.register_search("changed", changed);
+    actor.register_search("kept", kept);
+    actor.on_inbound(FsInbound::InvalidateRoots { pe_ids: vec![pe] }).await;
+    assert!(changed_cancel.is_cancelled());
+    assert!(!kept_cancel.is_cancelled());
+    assert!(actor.active_searches.contains_key("kept"));
+    assert!(
+        push.frames()
+            .iter()
+            .any(|(_, frame)| frame["error"]["message"] == "workspace_roots_changed")
+    );
 }
 
 #[tokio::test]
@@ -1313,6 +1334,7 @@ async fn completion_signals_done_actor_clears_and_later_cancel_is_noop() {
     actor.register_search(
         "1",
         ActiveSearch {
+            pe_ids: Vec::new(),
             search_id: json!(5),
             cancel,
         },

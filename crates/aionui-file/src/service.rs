@@ -1104,7 +1104,10 @@ mod tests {
         let result = build_dir_tree_sync(dir.path(), dir.path()).unwrap();
 
         assert_eq!(result[0].relative_path, "folder");
-        assert_eq!(result[0].children[0].relative_path, "folder/file.txt");
+        assert_eq!(
+            Path::new(&result[0].children[0].relative_path),
+            Path::new("folder/file.txt")
+        );
     }
 
     #[test]
@@ -1168,7 +1171,7 @@ mod tests {
         let files = list_workspace_files_sync(dir.path()).unwrap();
         let main_file = files.iter().find(|f| f.name == "main.rs").unwrap();
 
-        assert_eq!(main_file.relative_path, "src/main.rs");
+        assert_eq!(Path::new(&main_file.relative_path), Path::new("src/main.rs"));
     }
 
     /// Regression for ELECTRON-3TG: production canonicalizes the workspace root

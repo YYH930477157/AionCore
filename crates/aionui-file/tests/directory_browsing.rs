@@ -76,7 +76,10 @@ async fn get_files_by_dir_subdirectory() {
 
     assert_eq!(items.len(), 2);
     // Relative paths should be relative to root, not to sub
-    assert!(items[0].relative_path.starts_with("src/"));
+    assert_eq!(
+        std::path::Path::new(&items[0].relative_path).parent(),
+        Some(std::path::Path::new("src"))
+    );
 }
 
 #[tokio::test]
@@ -245,7 +248,10 @@ async fn list_workspace_files_relative_paths() {
     let files = svc.list_workspace_files(dir.path().to_str().unwrap()).await.unwrap();
 
     let helper = files.iter().find(|f| f.name == "helper.ts").unwrap();
-    assert_eq!(helper.relative_path, "src/utils/helper.ts");
+    assert_eq!(
+        std::path::Path::new(&helper.relative_path),
+        std::path::Path::new("src/utils/helper.ts")
+    );
 }
 
 #[cfg(unix)]

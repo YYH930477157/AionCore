@@ -78,21 +78,6 @@ pub struct ProjectExplorerView {
     pub entries: Vec<ProjectExplorerEntry>,
 }
 
-/// Managed-workspace state attached to a project.
-///
-/// Absent for the legacy single-root projects (`workspace_managed = 0`), where the workspace
-/// root is the immutable `role = 'workspace'` entry instead.
-#[derive(Debug, Clone, Serialize)]
-pub struct WorkspaceState {
-    pub managed: bool,
-    /// Configuration file this workspace was opened from or last saved to.
-    pub config_path: Option<String>,
-    /// Whether the stored roots differ from `config_path` (always false while unsaved).
-    pub dirty: bool,
-    /// Root new conversations start in; `None` falls back to the first root.
-    pub default_pe_id: Option<String>,
-}
-
 /// Aggregated project detail returned by `get_project`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectDetail {
@@ -100,10 +85,10 @@ pub struct ProjectDetail {
     pub name: String,
     pub kind: String,
     pub explorer: ProjectExplorerView,
-    /// Present only for managed workspaces.
-    pub workspace: Option<WorkspaceState>,
     pub created_at: TimestampMs,
     pub updated_at: TimestampMs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<aionui_api_types::WorkspaceState>,
 }
 
 /// Attach an additional (non-workspace) folder to a project.
@@ -142,6 +127,12 @@ pub struct ResolvedResource {
 /// rather than relying on message parsing.
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
+    #[error("workspace is being used by an active task: {project_id}")]
+    WorkspaceBusy { project_id: String },
+    #[error("invalid workspace: {reason}")]
+    InvalidWorkspace { reason: String },
+    #[error("workspace configuration could not be read or written")]
+    WorkspaceIo,
     #[error("folder not found: {path}")]
     FolderNotFound { path: String },
 
@@ -199,21 +190,6 @@ pub enum ProjectError {
     #[error("local file path is not a readable file: {path}")]
     LocalPathNotReadable { path: String },
 
-    #[error("project {project_id} is not a managed workspace")]
-    WorkspaceNotManaged { project_id: String },
-
-    #[error("workspace configuration is not valid JSON: {path}: {reason}")]
-    WorkspaceFileInvalid { path: String, reason: String },
-
-    #[error("workspace configuration cannot be read: {path}")]
-    WorkspaceFileUnreadable { path: String },
-
-    #[error("a workspace can only be saved once it has a path")]
-    WorkspacePathRequired,
-
-    #[error("workspace default root {pe_id} is not one of its roots")]
-    WorkspaceDefaultRootInvalid { pe_id: String },
-
     #[error(transparent)]
     Database(#[from] DbError),
 }
@@ -222,6 +198,9 @@ impl ProjectError {
     /// Stable, UI-consumable error code.
     pub fn code(&self) -> &'static str {
         match self {
+            ProjectError::WorkspaceBusy { .. } => "project_workspace_busy",
+            ProjectError::InvalidWorkspace { .. } => "invalid_workspace",
+            ProjectError::WorkspaceIo => "workspace_io_error",
             ProjectError::FolderNotFound { .. } => "folder_not_found",
             ProjectError::FolderNotDirectory { .. } => "folder_not_directory",
             ProjectError::FolderPermissionDenied { .. } => "folder_permission_denied",
@@ -241,11 +220,6 @@ impl ProjectError {
             ProjectError::UploadPathOutsideRoot { .. } => "upload_path_outside_root",
             ProjectError::ChatFileMissing { .. } => "chat_file_missing",
             ProjectError::LocalPathNotReadable { .. } => "local_path_not_readable",
-            ProjectError::WorkspaceNotManaged { .. } => "workspace_not_managed",
-            ProjectError::WorkspaceFileInvalid { .. } => "workspace_file_invalid",
-            ProjectError::WorkspaceFileUnreadable { .. } => "workspace_file_unreadable",
-            ProjectError::WorkspacePathRequired => "workspace_path_required",
-            ProjectError::WorkspaceDefaultRootInvalid { .. } => "workspace_default_root_invalid",
             ProjectError::Database(_) => "internal_db_error",
         }
     }
