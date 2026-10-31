@@ -29,6 +29,16 @@ static DB_MIGRATOR: Migrator = sqlx::migrate!();
 // Historical special-case for the MCP schema reconciliation fallback.
 // Keep this pinned to migration version 7 even as newer migrations land.
 const MCP_SCHEMA_RECONCILIATION_MIGRATION_VERSION: i64 = 7;
+
+/// Migrations whose SQL was rewritten *after* they shipped, so databases created before the
+/// rewrite store a checksum that no longer matches (#233 folded the aionrs resume migration and
+/// #234 the team behaviour-policy seed data into `001_initial_schema.sql`).
+///
+/// Append-only: add the version whose own file changed, not the version that absorbed it.
+/// Everything outside this list keeps the strict "an applied migration was modified" failure, so
+/// disk corruption or a hand-edited database still stops startup instead of being papered over.
+const RESTAMPED_MIGRATION_VERSIONS: &[i64] = &[1];
+
 const RECOVERABLE_DATABASE_CORRUPTION_STAGE: &str = "database.recoverable_corruption";
 /// Stage reported when the database was created by a NEWER app version than
 /// this binary: `_sqlx_migrations` contains a version the embedded migrator
@@ -462,8 +472,72 @@ async fn run_migrations_with_retry(conn: &mut sqlx::SqliteConnection) -> Result<
                 )))
             }
         }
+        Err(sqlx::migrate::MigrateError::VersionMismatch(version)) => {
+            // A migration that already shipped can be consolidated or edited afterwards (#233,
+            // #234 folded later migrations into `001_initial_schema.sql`). sqlx stores a SHA-384
+            // of each file in `_sqlx_migrations`, so every database created before the rewrite is
+            // rejected with "previously applied but has been modified" - permanently, and with no
+            // way forward for the user. Re-running an applied version is not an option, so
+            // re-stamping the stored checksums with the ones this binary embeds is the only action
+            // that keeps the data reachable.
+            let realigned = align_modified_migration_checksums(&mut *conn).await?;
+            if realigned.is_empty() {
+                return Err(DbError::Migration(sqlx::migrate::MigrateError::VersionMismatch(
+                    version,
+                )));
+            }
+            warn!("Migrations rewritten after release {realigned:?}; realigned their stored checksums and retrying");
+            DB_MIGRATOR.run(&mut *conn).await.map_err(DbError::Migration)
+        }
         Err(e) => Err(DbError::Migration(e)),
     }
+}
+
+/// Re-stamp `_sqlx_migrations` checksums for versions whose SQL was rewritten after release
+/// (see [`RESTAMPED_MIGRATION_VERSIONS`]). Returns the versions that were updated.
+///
+/// Only rows that are already applied are touched. A version sqlx has not run yet is left for
+/// the migrator to apply normally, and a version this binary does not know is left to
+/// `VersionMissing` so the downgrade path stays intact. A version outside the allowlist is never
+/// touched: a modified migration there is real evidence of tampering, not a release artefact.
+async fn align_modified_migration_checksums(conn: &mut sqlx::SqliteConnection) -> Result<Vec<i64>, DbError> {
+    let has_table: bool =
+        sqlx::query_scalar("SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'")
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(DbError::Query)?;
+    if !has_table {
+        return Ok(Vec::new());
+    }
+
+    let applied: Vec<(i64, Vec<u8>)> =
+        sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations WHERE success = 1")
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(DbError::Query)?;
+
+    let mut realigned = Vec::new();
+    for (version, stored) in applied {
+        if !RESTAMPED_MIGRATION_VERSIONS.contains(&version) {
+            continue;
+        }
+        let Some(migration) = DB_MIGRATOR.iter().find(|entry| entry.version == version) else {
+            continue;
+        };
+        if &*migration.checksum == stored.as_slice() {
+            continue;
+        }
+        let updated = sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+            .bind(&*migration.checksum)
+            .bind(version)
+            .execute(&mut *conn)
+            .await
+            .map_err(DbError::Query)?;
+        if updated.rows_affected() > 0 {
+            realigned.push(version);
+        }
+    }
+    Ok(realigned)
 }
 
 /// Detect the specific "another process inserted this version first" error.
