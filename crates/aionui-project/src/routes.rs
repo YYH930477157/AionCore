@@ -19,8 +19,9 @@
 use std::sync::Arc;
 
 use aionui_api_types::{
-    ApiResponse, AttachFolderRequest, ProjectDetailResponse, ProjectEntry, ProjectExplorer, ResolveRefRequest,
-    ResolveRefResponse,
+    ApiResponse, AttachFolderRequest, CreateWorkspaceRequest, OpenWorkspaceRequest, ProjectDetailResponse,
+    ProjectEntry, ProjectExplorer, ResolveRefRequest, ResolveRefResponse, SaveWorkspaceRequest, WorkspaceState,
+    WorkspaceUpdateRequest,
 };
 use aionui_auth::CurrentUser;
 use aionui_common::ApiError;
@@ -34,6 +35,7 @@ use serde_json::json;
 use crate::canonical;
 use crate::service::ProjectService;
 use crate::types::{AttachInput, ProjectDetail, ProjectError, ProjectExplorerEntry};
+use crate::workspace::{WorkspaceRootInput, WorkspaceUpdateInput};
 
 /// Shared state for project route handlers.
 #[derive(Clone)]
@@ -46,11 +48,108 @@ pub struct ProjectRouterState {
 /// All routes require authentication (applied by the caller).
 pub fn project_routes(state: ProjectRouterState) -> Router {
     Router::new()
+        .route("/api/projects/workspaces", post(create_workspace))
+        .route("/api/projects/workspaces/open", post(open_workspace))
         .route("/api/projects/{project_id}", get(get_project))
+        .route(
+            "/api/projects/{project_id}/workspace",
+            get(get_workspace).put(update_workspace),
+        )
+        .route("/api/projects/{project_id}/workspace/save", post(save_workspace))
+        .route("/api/projects/{project_id}/workspace/discard", post(discard_workspace))
         .route("/api/projects/{project_id}/folders", post(attach_folder))
         .route("/api/projects/{project_id}/folders/{pe_id}", delete(remove_folder))
         .route("/api/projects/{project_id}/resolve-ref", post(resolve_ref))
         .with_state(state)
+}
+
+/// `POST /api/projects/workspaces` — start a managed workspace, optionally with
+/// one root. The project exists from the first call so the explorer can open it
+/// before any folder is attached.
+async fn create_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    body: Result<Json<CreateWorkspaceRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<ProjectDetailResponse>>, ApiError> {
+    let Json(req) = body.map_err(ApiError::from)?;
+    let detail = state.project.create_managed(&user.id, req.name, req.uri).await?;
+    Ok(Json(ApiResponse::ok(to_detail_response(detail))))
+}
+
+/// `POST /api/projects/workspaces/open` — open a `.woody-workspace` file as a
+/// new project.
+async fn open_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    body: Result<Json<OpenWorkspaceRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<ProjectDetailResponse>>, ApiError> {
+    let Json(req) = body.map_err(ApiError::from)?;
+    let detail = state
+        .project
+        .open_managed(&user.id, std::path::Path::new(&req.path))
+        .await?;
+    Ok(Json(ApiResponse::ok(to_detail_response(detail))))
+}
+
+/// `GET /api/projects/{id}/workspace` — the managed-workspace binding of a project.
+async fn get_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(project_id): Path<String>,
+) -> Result<Json<ApiResponse<WorkspaceState>>, ApiError> {
+    let wstate = state.project.workspace_state(&user.id, &project_id).await?;
+    Ok(Json(ApiResponse::ok(to_workspace_state(wstate))))
+}
+
+/// `PUT /api/projects/{id}/workspace` — apply an edited root set.
+async fn update_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(project_id): Path<String>,
+    body: Result<Json<WorkspaceUpdateRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<ProjectDetailResponse>>, ApiError> {
+    let Json(req) = body.map_err(ApiError::from)?;
+    let update = WorkspaceUpdateInput {
+        name: req.name,
+        roots: req
+            .roots
+            .into_iter()
+            .map(|root| WorkspaceRootInput {
+                pe_id: root.pe_id,
+                uri: root.uri,
+                display_name: root.display_name,
+            })
+            .collect(),
+        default_pe_id: req.default_pe_id,
+    };
+    let detail = state.project.update_managed(&user.id, &project_id, update).await?;
+    Ok(Json(ApiResponse::ok(to_detail_response(detail))))
+}
+
+/// `POST /api/projects/{id}/workspace/save` — write the configuration file.
+async fn save_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(project_id): Path<String>,
+    body: Result<Json<SaveWorkspaceRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<WorkspaceState>>, ApiError> {
+    let Json(req) = body.map_err(ApiError::from)?;
+    let path = req.path.map(std::path::PathBuf::from);
+    let wstate = state
+        .project
+        .save_managed(&user.id, &project_id, path.as_deref())
+        .await?;
+    Ok(Json(ApiResponse::ok(to_workspace_state(wstate))))
+}
+
+/// `POST /api/projects/{id}/workspace/discard` — drop unsaved edits.
+async fn discard_workspace(
+    State(state): State<ProjectRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(project_id): Path<String>,
+) -> Result<Json<ApiResponse<ProjectDetailResponse>>, ApiError> {
+    let detail = state.project.discard_managed(&user.id, &project_id).await?;
+    Ok(Json(ApiResponse::ok(to_detail_response(detail))))
 }
 
 /// `GET /api/projects/{project_id}` — full project detail + all roots in one
@@ -154,6 +253,21 @@ fn to_detail_response(detail: ProjectDetail) -> ProjectDetailResponse {
             // `get_project` yields entries ordered by order_index ASC.
             entries: detail.explorer.entries.into_iter().map(to_entry).collect(),
         },
+        workspace: detail.workspace.map(|wstate| WorkspaceState {
+            managed: wstate.managed,
+            config_path: wstate.config_path,
+            dirty: wstate.dirty,
+            default_pe_id: wstate.default_pe_id,
+        }),
+    }
+}
+
+fn to_workspace_state(state: crate::types::WorkspaceState) -> WorkspaceState {
+    WorkspaceState {
+        managed: state.managed,
+        config_path: state.config_path,
+        dirty: state.dirty,
+        default_pe_id: state.default_pe_id,
     }
 }
 
@@ -237,6 +351,27 @@ impl From<ProjectError> for ApiError {
                 StatusCode::BAD_REQUEST,
                 "local_path_not_readable",
                 Some(json!({ "path": path })),
+            ),
+            ProjectError::WorkspaceNotManaged { project_id } => (
+                StatusCode::CONFLICT,
+                "workspace_not_managed",
+                Some(json!({ "project_id": project_id })),
+            ),
+            ProjectError::WorkspaceFileInvalid { path, reason } => (
+                StatusCode::BAD_REQUEST,
+                "workspace_file_invalid",
+                Some(json!({ "path": path, "reason": reason })),
+            ),
+            ProjectError::WorkspaceFileUnreadable { path } => (
+                StatusCode::BAD_REQUEST,
+                "workspace_file_unreadable",
+                Some(json!({ "path": path })),
+            ),
+            ProjectError::WorkspacePathRequired => (StatusCode::BAD_REQUEST, "workspace_path_required", None),
+            ProjectError::WorkspaceDefaultRootInvalid { pe_id } => (
+                StatusCode::BAD_REQUEST,
+                "workspace_default_root_invalid",
+                Some(json!({ "pe_id": pe_id })),
             ),
             ProjectError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", None),
         };

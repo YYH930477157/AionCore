@@ -54,7 +54,7 @@ pub use diagnostics::{
 };
 pub use mcp_server::IMcpServerRepository;
 pub use oauth_token::IOAuthTokenRepository;
-pub use project::IProjectStore;
+pub use project::{IProjectStore, RootSpec};
 pub use provider::IProviderRepository;
 pub use remote_agent::IRemoteAgentRepository;
 pub use settings::ISettingsRepository;

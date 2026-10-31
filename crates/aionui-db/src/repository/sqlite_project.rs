@@ -2,8 +2,8 @@ use aionui_common::{generate_prefixed_id, now_ms};
 use sqlx::{Row, SqlitePool};
 
 use crate::error::DbError;
-use crate::models::{FolderRow, ProjectExplorerRow, ProjectKind, ProjectRow};
-use crate::repository::project::IProjectStore;
+use crate::models::{FolderRow, ProjectExplorerRow, ProjectKind, ProjectRow, Role};
+use crate::repository::project::{IProjectStore, RootSpec};
 
 /// SQLite-backed implementation of [`IProjectStore`].
 #[derive(Clone, Debug)]
@@ -18,7 +18,8 @@ impl SqliteProjectStore {
 }
 
 const FOLDER_COLS: &str = "folder_id, resource_uri, resource_canonical, created_at, updated_at";
-const PROJECT_COLS: &str = "project_id, name, kind, created_at, updated_at";
+const PROJECT_COLS: &str = "project_id, name, kind, created_at, updated_at, workspace_managed, \
+     workspace_config_path, workspace_default_pe_id, workspace_dirty";
 const ENTRY_COLS: &str = "pe_id, project_id, folder_id, role, display_name, order_index, created_at, updated_at";
 
 #[async_trait::async_trait]
@@ -314,5 +315,160 @@ impl IProjectStore for SqliteProjectStore {
         self.get_entry(user_id, pe_id)
             .await?
             .ok_or_else(|| DbError::NotFound(format!("project_explorer {pe_id}")))
+    }
+
+    async fn create_project(
+        &self,
+        user_id: &str,
+        name: &str,
+        kind: ProjectKind,
+        managed: bool,
+    ) -> Result<ProjectRow, DbError> {
+        let now = now_ms();
+        let project_id = generate_prefixed_id("proj");
+        sqlx::query(
+            "INSERT INTO projects (project_id, user_id, name, kind, created_at, updated_at, \
+             workspace_managed, workspace_config_path, workspace_default_pe_id, workspace_dirty) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)",
+        )
+        .bind(&project_id)
+        .bind(user_id)
+        .bind(name)
+        .bind(kind.as_str())
+        .bind(now)
+        .bind(now)
+        .bind(i64::from(managed))
+        .execute(&self.pool)
+        .await?;
+        self.get_project(user_id, &project_id)
+            .await?
+            .ok_or_else(|| DbError::NotFound(format!("project {project_id} after insert")))
+    }
+
+    async fn rename_project(&self, user_id: &str, project_id: &str, name: &str) -> Result<(), DbError> {
+        let result = sqlx::query("UPDATE projects SET name = ?, updated_at = ? WHERE project_id = ? AND user_id = ?")
+            .bind(name)
+            .bind(now_ms())
+            .bind(project_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(DbError::NotFound(format!("project {project_id}")));
+        }
+        Ok(())
+    }
+
+    async fn set_workspace_state(
+        &self,
+        user_id: &str,
+        project_id: &str,
+        config_path: Option<&str>,
+        default_pe_id: Option<&str>,
+        dirty: bool,
+    ) -> Result<(), DbError> {
+        let result = sqlx::query(
+            "UPDATE projects SET workspace_config_path = ?, workspace_default_pe_id = ?, \
+             workspace_dirty = ?, updated_at = ? WHERE project_id = ? AND user_id = ?",
+        )
+        .bind(config_path)
+        .bind(default_pe_id)
+        .bind(i64::from(dirty))
+        .bind(now_ms())
+        .bind(project_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(DbError::NotFound(format!("project {project_id}")));
+        }
+        Ok(())
+    }
+
+    async fn replace_roots(
+        &self,
+        user_id: &str,
+        project_id: &str,
+        roots: &[RootSpec],
+        role: Role,
+    ) -> Result<Vec<ProjectExplorerRow>, DbError> {
+        let now = now_ms();
+        let mut tx = self.pool.begin().await?;
+        let existing = sqlx::query_as::<_, ProjectExplorerRow>(&format!(
+            "SELECT {ENTRY_COLS} FROM project_explorer WHERE project_id = ? AND owner_user_id = ?"
+        ))
+        .bind(project_id)
+        .bind(user_id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        let mut ordered = Vec::with_capacity(roots.len());
+        for (position, root) in roots.iter().enumerate() {
+            let order_index = position as i64;
+            // Reuse the row when the folder survives: its pe_id is the frontend's tab identity.
+            if let Some(row) = existing.iter().find(|row| row.folder_id == root.folder_id) {
+                sqlx::query(
+                    "UPDATE project_explorer SET role = ?, display_name = ?, order_index = ?, updated_at = ? \
+                     WHERE pe_id = ? AND owner_user_id = ?",
+                )
+                .bind(role.as_str())
+                .bind(root.display_name.as_deref())
+                .bind(order_index)
+                .bind(now)
+                .bind(&row.pe_id)
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+                let mut updated = row.clone();
+                updated.role = role.as_str().to_owned();
+                updated.display_name = root.display_name.clone();
+                updated.order_index = order_index;
+                updated.updated_at = now;
+                ordered.push(updated);
+                continue;
+            }
+
+            let pe_id = generate_prefixed_id("pe");
+            sqlx::query(
+                "INSERT INTO project_explorer \
+                 (pe_id, project_id, owner_user_id, folder_id, role, display_name, order_index, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&pe_id)
+            .bind(project_id)
+            .bind(user_id)
+            .bind(&root.folder_id)
+            .bind(role.as_str())
+            .bind(root.display_name.as_deref())
+            .bind(order_index)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+            ordered.push(ProjectExplorerRow {
+                pe_id,
+                project_id: project_id.to_owned(),
+                folder_id: root.folder_id.clone(),
+                role: role.as_str().to_owned(),
+                display_name: root.display_name.clone(),
+                order_index,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        // Anything the caller dropped from the workspace stops being a root of this project.
+        for row in &existing {
+            if !roots.iter().any(|root| root.folder_id == row.folder_id) {
+                sqlx::query("DELETE FROM project_explorer WHERE pe_id = ? AND owner_user_id = ?")
+                    .bind(&row.pe_id)
+                    .bind(user_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+
+        tx.commit().await?;
+        Ok(ordered)
     }
 }

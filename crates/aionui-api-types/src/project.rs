@@ -22,6 +22,70 @@ pub struct ProjectDetailResponse {
     /// Project display name (explorer header).
     pub name: String,
     pub explorer: ProjectExplorer,
+    /// Present only for managed multi-root workspaces; legacy single-root
+    /// projects omit it and keep their pinned `workspace` entry instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceState>,
+}
+
+/// Managed-workspace binding: whether the project is one, the file it was
+/// opened from / last saved to, and whether the stored roots are unsaved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceState {
+    pub managed: bool,
+    /// `null` until the workspace has been saved somewhere; serialized explicitly so
+    /// the frontend can branch on `null` rather than "missing".
+    pub config_path: Option<String>,
+    pub dirty: bool,
+    /// `null` falls back to the first root.
+    pub default_pe_id: Option<String>,
+}
+
+/// `POST /api/projects/workspaces` body — start a managed workspace, optionally
+/// rooted at one existing folder.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateWorkspaceRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    /// `file://` URI of the first root; omitted for an empty workspace.
+    #[serde(default)]
+    pub uri: Option<String>,
+}
+
+/// `POST /api/projects/workspaces/open` body — a `.woody-workspace` file.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpenWorkspaceRequest {
+    pub path: String,
+}
+
+/// One root of a [`WorkspaceUpdateRequest`].
+///
+/// `pe_id` addresses a root that already exists (rename / reorder / default);
+/// omitting it registers the folder at `uri`, which is how roots are added.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceRootRequest {
+    #[serde(default)]
+    pub pe_id: Option<String>,
+    pub uri: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+/// `PUT /api/projects/{id}/workspace` body — the whole edited workspace.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceUpdateRequest {
+    pub name: String,
+    pub roots: Vec<WorkspaceRootRequest>,
+    #[serde(default)]
+    pub default_pe_id: Option<String>,
+}
+
+/// `POST /api/projects/{id}/workspace/save` body — where to write the file.
+/// Omitted means "the path this workspace was opened from".
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SaveWorkspaceRequest {
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// The explorer view of a project: its pinned workspace root plus every

@@ -384,3 +384,115 @@ async fn resolve_ref_returns_the_ref_when_the_file_is_missing_even_for_an_unknow
     assert_eq!(body["data"]["file"]["kind"], "local");
     assert_eq!(body["data"]["upgraded"], false);
 }
+
+// ── managed workspaces ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn create_workspace_route_returns_a_managed_project() {
+    let (router, _project_id, _workspace_pe_id, _dir, _db) = setup().await;
+
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/api/projects/workspaces",
+        Some(json!({ "name": "Plan" })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let detail = &body["data"];
+    assert_eq!(detail["name"], "Plan");
+    assert_eq!(detail["workspace"]["managed"], true);
+    assert_eq!(detail["workspace"]["dirty"], false);
+    assert!(detail["explorer"]["entries"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn workspace_routes_round_trip_roots_save_and_discard() {
+    let (router, _project_id, _workspace_pe_id, root_dir, _db) = setup().await;
+    let config_dir = tempfile::tempdir().unwrap();
+    let config_path = config_dir.path().join("plan.woody-workspace");
+    let root_uri = to_file_uri(root_dir.path()).unwrap();
+
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/api/projects/workspaces",
+        Some(json!({ "name": "Plan", "uri": root_uri })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let project_id = body["data"]["project_id"].as_str().unwrap().to_owned();
+    let pe_id = body["data"]["explorer"]["entries"][0]["pe_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(body["data"]["explorer"]["entries"][0]["role"], "attached");
+
+    // `GET .../workspace` exposes the binding the desktop dialogs read.
+    let (status, body) = send(&router, "GET", &format!("/api/projects/{project_id}/workspace"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["managed"], true);
+    assert_eq!(body["data"]["default_pe_id"], pe_id);
+    assert!(body["data"]["config_path"].is_null());
+
+    // Saving writes the file; the path is echoed back and nothing is dirty afterwards.
+    let (status, body) = send(
+        &router,
+        "POST",
+        &format!("/api/projects/{project_id}/workspace/save"),
+        Some(json!({ "path": config_path.to_string_lossy() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["dirty"], false);
+    assert_eq!(
+        body["data"]["config_path"].as_str().unwrap(),
+        config_path.to_string_lossy()
+    );
+    assert!(config_path.exists());
+
+    // A rename after saving is an unsaved edit.
+    let (status, body) = send(
+        &router,
+        "PUT",
+        &format!("/api/projects/{project_id}/workspace"),
+        Some(json!({
+            "name": "Plan v2",
+            "roots": [{ "pe_id": pe_id, "uri": root_uri }],
+            "default_pe_id": pe_id,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["name"], "Plan v2");
+    assert_eq!(body["data"]["workspace"]["dirty"], true);
+
+    // Discard re-reads the file, restoring the saved name and clearing `dirty`.
+    let (status, body) = send(
+        &router,
+        "POST",
+        &format!("/api/projects/{project_id}/workspace/discard"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["name"], "Plan");
+    assert_eq!(body["data"]["workspace"]["dirty"], false);
+}
+
+#[tokio::test]
+async fn workspace_update_on_a_legacy_project_maps_to_409() {
+    let (router, project_id, _workspace_pe_id, _dir, _db) = setup().await;
+
+    let (status, body) = send(
+        &router,
+        "PUT",
+        &format!("/api/projects/{project_id}/workspace"),
+        Some(json!({ "name": "Nope", "roots": [] })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], "workspace_not_managed");
+}

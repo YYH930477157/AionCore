@@ -11,7 +11,7 @@ use crate::containment;
 use crate::scm::ScmInbound;
 use crate::types::{
     AttachInput, FolderDto, ProjectDetail, ProjectError, ProjectExplorerEntry, ProjectExplorerView, ReferenceInput,
-    ResolveOutput, ResolvedResource, RuntimeStatus,
+    ResolveOutput, ResolvedResource, RuntimeStatus, WorkspaceState,
 };
 
 /// Orchestrates the three project-bind tables through an injected
@@ -38,6 +38,11 @@ impl ProjectService {
         }
     }
 
+    /// The project store, for sibling modules in this crate (managed workspaces).
+    pub(crate) fn project_store(&self) -> &Arc<dyn IProjectStore> {
+        &self.store
+    }
+
     /// Install the sink that carries project-root changes to the source-control
     /// actor. Called once, at startup, by the scm monitor's composition wiring;
     /// later calls are ignored (set-once). Because the field is shared across
@@ -52,7 +57,7 @@ impl ProjectService {
     /// Best effort: if no actor is wired, or it has stopped, source control simply
     /// misses the live update (a manual refresh still recovers) — this never fails
     /// the attach or detach that already succeeded.
-    fn notify_roots_changed(&self, project_id: &str, user_id: &str) {
+    pub(crate) fn notify_scm_roots_changed(&self, project_id: &str, user_id: &str) {
         if let Some(tx) = self.scm_roots_tx.get() {
             let _ = tx.send(ScmInbound::RootsChanged {
                 project_id: project_id.to_owned(),
@@ -66,7 +71,7 @@ impl ProjectService {
     /// User-selected existing directory → `kind = standard`.
     pub async fn create_standard(&self, user_id: &str, uri: String) -> Result<ResolveOutput, ProjectError> {
         let canonical = canonical::canonicalize(&uri)?;
-        self.ensure_accessible(&canonical)?;
+        self.ensure_folder_accessible(&canonical)?;
         self.resolve_core(user_id, canonical, uri, ProjectKind::Standard, None)
             .await
     }
@@ -96,7 +101,7 @@ impl ProjectService {
     /// is decided here (under `temp_root` ⇒ temp, otherwise standard).
     pub async fn resolve_existing(&self, user_id: &str, uri: String) -> Result<ResolveOutput, ProjectError> {
         let canonical = canonical::canonicalize(&uri)?;
-        self.ensure_accessible(&canonical)?;
+        self.ensure_folder_accessible(&canonical)?;
         let kind = if self.is_under_temp_root(&canonical) {
             ProjectKind::Temp
         } else {
@@ -166,7 +171,7 @@ impl ProjectService {
                 project_id: input.project_id.clone(),
             })?;
         let canonical = canonical::canonicalize(&input.uri)?;
-        self.ensure_accessible(&canonical)?;
+        self.ensure_folder_accessible(&canonical)?;
         let folder = self.store.upsert_folder(canonical.as_str(), &input.uri).await?;
 
         let entries = self.store.list_entries(user_id, &input.project_id).await?;
@@ -207,7 +212,7 @@ impl ProjectService {
         // A newly attached folder can bring a repository into view. The
         // focus-in-place branches above return early without notifying — they add
         // no root, so the repository set is unchanged.
-        self.notify_roots_changed(&input.project_id, user_id);
+        self.notify_scm_roots_changed(&input.project_id, user_id);
         Ok(row)
     }
 
@@ -227,7 +232,7 @@ impl ProjectService {
         }
         self.store.remove_entry(user_id, pe_id).await?;
         // Detaching a folder can drop a repository from the project's set.
-        self.notify_roots_changed(&entry.project_id, user_id);
+        self.notify_scm_roots_changed(&entry.project_id, user_id);
         Ok(())
     }
 
@@ -241,7 +246,7 @@ impl ProjectService {
     /// source-control actor recompute (now-empty) roots for the gone project.
     pub async fn delete_project(&self, user_id: &str, project_id: &str) -> Result<(), ProjectError> {
         self.store.delete_project(user_id, project_id).await?;
-        self.notify_roots_changed(project_id, user_id);
+        self.notify_scm_roots_changed(project_id, user_id);
         Ok(())
     }
 
@@ -301,6 +306,17 @@ impl ProjectService {
             });
         }
 
+        let workspace = if project.workspace_managed == 0 {
+            None
+        } else {
+            Some(WorkspaceState {
+                managed: true,
+                config_path: project.workspace_config_path.clone(),
+                dirty: project.workspace_dirty != 0,
+                default_pe_id: project.workspace_default_pe_id.clone(),
+            })
+        };
+
         Ok(ProjectDetail {
             id: project.project_id,
             name: project.name,
@@ -309,6 +325,7 @@ impl ProjectService {
                 workspace_pe_id,
                 entries,
             },
+            workspace,
             created_at: project.created_at,
             updated_at: project.updated_at,
         })
@@ -395,7 +412,7 @@ impl ProjectService {
     // ── filesystem helpers ──────────────────────────────────────────────
 
     /// Stat a canonical folder to confirm it is an existing directory.
-    fn ensure_accessible(&self, canonical: &Canonical) -> Result<(), ProjectError> {
+    pub(crate) fn ensure_folder_accessible(&self, canonical: &Canonical) -> Result<(), ProjectError> {
         let path = canonical::fs_path(canonical)?;
         match std::fs::metadata(&path) {
             Ok(meta) if meta.is_dir() => Ok(()),
