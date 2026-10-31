@@ -7,12 +7,14 @@
 # Linux x64 archives with scripts/remote-build.sh, keeping its cargo target dir
 # warm between releases, so only crates that changed since the last release are
 # recompiled. `--test` runs the workspace tests on the host first. The archives
-# are then published from this machine with the local gh login, so the host
-# holds no GitHub credentials.
+# then pass scripts/check-upgrade.sh and are published from this machine with
+# the local gh login, so the host holds no GitHub credentials.
 #
 # Environment:
 #   AIONCORE_BUILD_HOST  ssh alias of the build host (default: perf)
 #   AIONCORE_BUILD_USER  unprivileged build account on the host (default: aionbuild)
+#   AIONCORE_UPGRADE_FROM  release tags whose databases the build must open
+#                          (space separated; default: the latest published release)
 #
 # One-time host setup: a Rust toolchain matching rust-toolchain.toml, cargo-xwin,
 # cargo-nextest, clang/lld, zip, and a clone of this repo at ~/AionCore for the
@@ -64,7 +66,8 @@ ssh "${host}" "systemctl is-active -q ${unit} && { echo 'Another build is runnin
 # Pull the archives back in parallel byte ranges: a single ssh stream from the
 # host can be several times slower than the link allows.
 dist="$(mktemp -d)"
-trap 'rm -rf "${dist}"' EXIT
+upgrade="$(mktemp -d)"
+trap 'rm -rf "${dist}" "${upgrade}"' EXIT
 streams=8
 sizes="$(ssh "${host}" "cd ${home}/dist/${tag} && stat -c '%s %n' aioncore-*")"
 while read -r size name; do
@@ -80,6 +83,24 @@ while read -r size name; do
   rm -f "${dist}/${name}".part*
 done <<<"${sizes}"
 (cd "${dist}" && sha256sum -c --quiet aioncore-checksums.txt)
+
+# Refuse to publish a build that cannot open the databases earlier releases made.
+case "$(uname -s)" in
+  MINGW* | MSYS*)
+    unzip -q "${dist}"/*-windows-msvc.zip -d "${upgrade}/new"
+    previous_tags="${AIONCORE_UPGRADE_FROM:-$(gh release list --repo "${repo}" --exclude-drafts --limit 20 \
+      --json tagName -q '.[].tagName' | grep -vx "${tag}" | head -n 1)}"
+    for previous in ${previous_tags}; do
+      echo "Checking the upgrade from ${previous}..."
+      gh release download "${previous}" --repo "${repo}" --pattern '*windows-msvc.zip' --dir "${upgrade}/${previous}"
+      unzip -q "${upgrade}/${previous}"/*.zip -d "${upgrade}/${previous}"
+      "${script_dir}/check-upgrade.sh" "${upgrade}/${previous}/aioncore.exe" "${upgrade}/new/aioncore.exe"
+    done
+    ;;
+  *)
+    echo "Skipping the upgrade check: it runs the Windows backend." >&2
+    ;;
+esac
 
 if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
   gh release upload "${tag}" "${dist}"/* --repo "${repo}" --clobber

@@ -1,2 +1,4 @@
 *.sh text eol=lf
 *.ps1 text eol=crlf
+# sqlx hashes these bytes at compile time, so a CRLF checkout builds different checksums.
+crates/aionui-db/migrations/*.sql text eol=lf

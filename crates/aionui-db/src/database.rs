@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use fs2::FileExt;
+use sha2::{Digest, Sha384};
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolOptions;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
@@ -29,15 +30,6 @@ static DB_MIGRATOR: Migrator = sqlx::migrate!();
 // Historical special-case for the MCP schema reconciliation fallback.
 // Keep this pinned to migration version 7 even as newer migrations land.
 const MCP_SCHEMA_RECONCILIATION_MIGRATION_VERSION: i64 = 7;
-
-/// Migrations whose SQL was rewritten *after* they shipped, so databases created before the
-/// rewrite store a checksum that no longer matches (#233 folded the aionrs resume migration and
-/// #234 the team behaviour-policy seed data into `001_initial_schema.sql`).
-///
-/// Append-only: add the version whose own file changed, not the version that absorbed it.
-/// Everything outside this list keeps the strict "an applied migration was modified" failure, so
-/// disk corruption or a hand-edited database still stops startup instead of being papered over.
-const RESTAMPED_MIGRATION_VERSIONS: &[i64] = &[1];
 
 const RECOVERABLE_DATABASE_CORRUPTION_STAGE: &str = "database.recoverable_corruption";
 /// Stage reported when the database was created by a NEWER app version than
@@ -451,6 +443,22 @@ async fn run_migrations_staged(pool: &SqlitePool) -> Result<(), DatabaseInitErro
 /// pass sees the row that the winner committed, checksum matches (same
 /// shipped binary), and the migration is treated as already applied.
 async fn run_migrations_with_retry(conn: &mut sqlx::SqliteConnection) -> Result<(), DbError> {
+    match run_reconciled_migrations(&mut *conn).await {
+        Err(DbError::Migration(sqlx::migrate::MigrateError::VersionMismatch(version))) => {
+            let realigned = align_line_ending_checksums(&mut *conn).await?;
+            if realigned.is_empty() {
+                return Err(DbError::Migration(sqlx::migrate::MigrateError::VersionMismatch(
+                    version,
+                )));
+            }
+            warn!("Migrations {realigned:?} were recorded with other line endings; realigned their checksums");
+            run_reconciled_migrations(&mut *conn).await
+        }
+        other => other,
+    }
+}
+
+async fn run_reconciled_migrations(conn: &mut sqlx::SqliteConnection) -> Result<(), DbError> {
     match DB_MIGRATOR.run(&mut *conn).await {
         Ok(()) => Ok(()),
         Err(e) if is_migrations_table_unique_conflict(&e) => {
@@ -472,72 +480,62 @@ async fn run_migrations_with_retry(conn: &mut sqlx::SqliteConnection) -> Result<
                 )))
             }
         }
-        Err(sqlx::migrate::MigrateError::VersionMismatch(version)) => {
-            // A migration that already shipped can be consolidated or edited afterwards (#233,
-            // #234 folded later migrations into `001_initial_schema.sql`). sqlx stores a SHA-384
-            // of each file in `_sqlx_migrations`, so every database created before the rewrite is
-            // rejected with "previously applied but has been modified" - permanently, and with no
-            // way forward for the user. Re-running an applied version is not an option, so
-            // re-stamping the stored checksums with the ones this binary embeds is the only action
-            // that keeps the data reachable.
-            let realigned = align_modified_migration_checksums(&mut *conn).await?;
-            if realigned.is_empty() {
-                return Err(DbError::Migration(sqlx::migrate::MigrateError::VersionMismatch(
-                    version,
-                )));
-            }
-            warn!("Migrations rewritten after release {realigned:?}; realigned their stored checksums and retrying");
-            DB_MIGRATOR.run(&mut *conn).await.map_err(DbError::Migration)
-        }
         Err(e) => Err(DbError::Migration(e)),
     }
 }
 
-/// Re-stamp `_sqlx_migrations` checksums for versions whose SQL was rewritten after release
-/// (see [`RESTAMPED_MIGRATION_VERSIONS`]). Returns the versions that were updated.
+/// Re-stamp applied migrations whose stored checksum is the same SQL with other line endings.
 ///
-/// Only rows that are already applied are touched. A version sqlx has not run yet is left for
-/// the migrator to apply normally, and a version this binary does not know is left to
-/// `VersionMissing` so the downgrade path stays intact. A version outside the allowlist is never
-/// touched: a modified migration there is real evidence of tampering, not a release artefact.
-async fn align_modified_migration_checksums(conn: &mut sqlx::SqliteConnection) -> Result<Vec<i64>, DbError> {
-    let has_table: bool =
-        sqlx::query_scalar("SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'")
-            .fetch_one(&mut *conn)
-            .await
-            .map_err(DbError::Query)?;
-    if !has_table {
-        return Ok(Vec::new());
-    }
-
+/// sqlx hashes each file's bytes at compile time, so one source tree produces different checksums
+/// from a CRLF checkout (GitHub's Windows runners, up to v0.2.2-woody.4) and an LF one. Without this
+/// a database cannot be opened by a build that differs only in how the files were checked out.
+///
+/// All or nothing: one row that is not a line-ending variant leaves every row as it was, so a
+/// failed start never rewrites the table and a modified migration keeps the strict failure. Version
+/// 7 is the exception that does not block, because its own repair runs on the retry.
+async fn align_line_ending_checksums(conn: &mut sqlx::SqliteConnection) -> Result<Vec<i64>, DbError> {
     let applied: Vec<(i64, Vec<u8>)> =
         sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations WHERE success = 1")
             .fetch_all(&mut *conn)
             .await
             .map_err(DbError::Query)?;
 
-    let mut realigned = Vec::new();
+    let mut stale = Vec::new();
     for (version, stored) in applied {
-        if !RESTAMPED_MIGRATION_VERSIONS.contains(&version) {
-            continue;
-        }
         let Some(migration) = DB_MIGRATOR.iter().find(|entry| entry.version == version) else {
             continue;
         };
-        if &*migration.checksum == stored.as_slice() {
+        if *migration.checksum == *stored {
             continue;
         }
-        let updated = sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
-            .bind(&*migration.checksum)
-            .bind(version)
-            .execute(&mut *conn)
-            .await
-            .map_err(DbError::Query)?;
-        if updated.rows_affected() > 0 {
-            realigned.push(version);
+        if is_line_ending_variant(&migration.sql, &stored) {
+            stale.push(migration);
+        } else if version != MCP_SCHEMA_RECONCILIATION_MIGRATION_VERSION {
+            return Ok(Vec::new());
         }
     }
-    Ok(realigned)
+
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.map_err(DbError::Query)?;
+    for migration in &stale {
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+            .bind(&*migration.checksum)
+            .bind(migration.version)
+            .execute(&mut *tx)
+            .await
+            .map_err(DbError::Query)?;
+    }
+    tx.commit().await.map_err(DbError::Query)?;
+
+    Ok(stale.iter().map(|migration| migration.version).collect())
+}
+
+/// Whether `stored` is the checksum of `sql` written with LF or with CRLF line endings.
+fn is_line_ending_variant(sql: &str, stored: &[u8]) -> bool {
+    let lf = sql.replace("\r\n", "\n");
+    let crlf = lf.replace('\n', "\r\n");
+    [lf, crlf]
+        .iter()
+        .any(|text| Sha384::digest(text.as_bytes()).as_slice() == stored)
 }
 
 /// Detect the specific "another process inserted this version first" error.
@@ -828,6 +826,31 @@ fn is_corruption_like_error(err: &DbError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_migrations_use_lf() {
+        // CRLF here means a checkout ignored .gitattributes; the build would record other checksums.
+        assert!(DB_MIGRATOR.iter().all(|migration| !migration.sql.contains('\r')));
+    }
+
+    #[test]
+    fn line_ending_variants_match_in_both_directions() {
+        let lf = "CREATE TABLE a (id INTEGER);\nCREATE TABLE b (id INTEGER);\n";
+        let crlf = lf.replace('\n', "\r\n");
+
+        assert!(is_line_ending_variant(lf, Sha384::digest(crlf.as_bytes()).as_slice()));
+        assert!(is_line_ending_variant(&crlf, Sha384::digest(lf.as_bytes()).as_slice()));
+    }
+
+    #[test]
+    fn different_sql_is_not_a_line_ending_variant() {
+        let stored = Sha384::digest(b"CREATE TABLE b (id INTEGER);\r\n");
+
+        assert!(!is_line_ending_variant(
+            "CREATE TABLE a (id INTEGER);\n",
+            stored.as_slice()
+        ));
+    }
 
     #[test]
     fn recovery_skips_migration_version_mismatch() {
