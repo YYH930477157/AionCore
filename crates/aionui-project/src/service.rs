@@ -15,6 +15,9 @@ use crate::types::{
 };
 
 mod workspace;
+
+/// How long removing a project waits for the turns its removal just stopped.
+const PROJECT_DELETE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 pub use workspace::{ManagedWorkspaceRuntime, WorkspaceRuntimeRoot};
 
 /// Orchestrates the three project-bind tables through an injected
@@ -274,7 +277,9 @@ impl ProjectService {
     /// orchestration, BR-19). A best-effort `repositoriesChanged` notify lets the
     /// source-control actor recompute (now-empty) roots for the gone project.
     pub async fn delete_project(&self, user_id: &str, project_id: &str) -> Result<(), ProjectError> {
-        let _guard = self.workspace_write_lock(project_id)?;
+        let _guard = self
+            .workspace_write_lock_after_stop(project_id, PROJECT_DELETE_WAIT)
+            .await?;
         let old_roots = self.store.list_entries(user_id, project_id).await?;
         self.store.delete_project(user_id, project_id).await?;
         self.invalidate_fs_roots(old_roots.into_iter().map(|(entry, _)| entry.pe_id).collect());

@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use aionui_api_types::{CreateWorkspaceRequest, UpdateWorkspaceRequest, WorkspaceRootRequest, WorkspaceState};
 use aionui_common::generate_prefixed_id;
@@ -71,6 +72,20 @@ impl ProjectService {
     pub(super) fn workspace_write_lock(&self, project_id: &str) -> Result<OwnedRwLockWriteGuard<()>, ProjectError> {
         self.workspace_lock(project_id)
             .try_write_owned()
+            .map_err(|_| ProjectError::WorkspaceBusy {
+                project_id: project_id.into(),
+            })
+    }
+
+    /// For a caller that has just stopped the tasks: a stopped turn only drops its lease once its
+    /// tool cleanup ends, which would otherwise read as a busy workspace.
+    pub(super) async fn workspace_write_lock_after_stop(
+        &self,
+        project_id: &str,
+        wait: Duration,
+    ) -> Result<OwnedRwLockWriteGuard<()>, ProjectError> {
+        tokio::time::timeout(wait, self.workspace_lock(project_id).write_owned())
+            .await
             .map_err(|_| ProjectError::WorkspaceBusy {
                 project_id: project_id.into(),
             })

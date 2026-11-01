@@ -569,3 +569,31 @@ async fn a_workspace_opened_from_another_extension_saves_back_to_that_file() {
 
     assert!(renamed.exists());
 }
+
+#[tokio::test]
+async fn deleting_a_workspace_waits_for_a_stopping_task() {
+    let (svc, _db) = service().await;
+    let workspace = named_workspace(&svc, "Stopping").await;
+    let lease = svc.acquire_workspace_task(USER, &workspace.id).await.unwrap();
+
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drop(lease);
+    });
+    svc.delete_project(USER, &workspace.id).await.unwrap();
+    release.await.unwrap();
+
+    assert!(svc.get_project(USER, &workspace.id).await.is_err());
+}
+
+#[tokio::test]
+async fn deleting_a_workspace_gives_up_on_a_task_that_never_stops() {
+    let (svc, _db) = service().await;
+    let workspace = named_workspace(&svc, "Stuck").await;
+    let _lease = svc.acquire_workspace_task(USER, &workspace.id).await.unwrap();
+
+    let error = svc.delete_project(USER, &workspace.id).await.unwrap_err();
+
+    assert!(matches!(error, aionui_project::ProjectError::WorkspaceBusy { .. }));
+    assert!(svc.get_project(USER, &workspace.id).await.is_ok());
+}
