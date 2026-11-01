@@ -2654,6 +2654,7 @@ impl ConversationService {
         if !had_active_turn {
             self.runtime_state.clear_deleting(id);
         }
+        self.remove_managed_runtime_dir(id).await;
         // No FK / CASCADE on `acp_session`: clean it up here so non-ACP
         // conversations that used to be ACP (shouldn't happen but is
         // cheap to cover) still drop their orphaned session row.

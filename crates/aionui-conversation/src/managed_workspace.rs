@@ -5,8 +5,10 @@ use aionui_ai_agent::{AgentInstance, types::AionrsWorkspaceRoot};
 use aionui_common::AgentType;
 use aionui_db::models::ConversationRow;
 use aionui_project::{ManagedWorkspaceRuntime, ProjectError, ProjectService, RuntimeStatus};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::OwnedRwLockReadGuard;
+use tracing::warn;
 
 impl ConversationService {
     fn workspace_service(&self) -> Option<Arc<ProjectService>> {
@@ -89,6 +91,19 @@ impl ConversationService {
         }
     }
 
+    fn managed_runtime_dir(&self, conversation_id: &str) -> PathBuf {
+        self.workspace_root.join("managed-runtime").join(conversation_id)
+    }
+
+    /// Remove the directory a conversation started from while its workspace had no default.
+    pub(crate) async fn remove_managed_runtime_dir(&self, conversation_id: &str) {
+        match tokio::fs::remove_dir_all(self.managed_runtime_dir(conversation_id)).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => warn!(%conversation_id, %err, "Failed to remove managed runtime directory"),
+        }
+    }
+
     pub(crate) async fn managed_workspace_bootstrap(
         &self,
         row: &ConversationRow,
@@ -105,7 +120,7 @@ impl ConversationService {
         // Engine initialization still needs a directory. This private directory is
         // never the command cwd: apply_managed_workspace supplies the explicit
         // missing/absent default before any user turn reaches the engine.
-        let private = self.workspace_root.join("managed-runtime").join(&row.id);
+        let private = self.managed_runtime_dir(&row.id);
         std::fs::create_dir_all(&private)
             .map_err(|err| ConversationError::internal(format!("workspace initialization: {err}")))?;
         Ok(Some(private.to_string_lossy().into_owned()))

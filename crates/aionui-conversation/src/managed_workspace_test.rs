@@ -281,6 +281,33 @@ async fn conversation_of_a_removed_managed_workspace_still_starts() {
 }
 
 #[tokio::test]
+async fn deleting_a_conversation_removes_its_private_runtime_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let (svc, _, repo, _) = make_service_with_workspace_root(temp.path().to_path_buf());
+    let projects = make_injected_project_service(temp.path()).await;
+    svc.with_project_service(projects.clone());
+    let workspace = projects
+        .create_workspace(
+            "user_1",
+            CreateWorkspaceRequest {
+                name: "No default".into(),
+                uri: None,
+            },
+        )
+        .await
+        .unwrap();
+    let conv = svc.create("user_1", managed_request(&workspace.id)).await.unwrap();
+    let row = repo.get("user_1", &conv.id).await.unwrap().unwrap();
+    svc.build_task_options(&row).await.unwrap();
+    let private = temp.path().join("managed-runtime").join(&conv.id);
+    assert!(private.is_dir());
+
+    svc.delete("user_1", &conv.id).await.unwrap();
+
+    assert!(!private.exists());
+}
+
+#[tokio::test]
 async fn managed_workspace_binding_lease_lasts_until_cancelled_task_finishes() {
     let temp = tempfile::tempdir().unwrap();
     let (svc, _, _, _) = make_service_with_workspace_root(temp.path().to_path_buf());
