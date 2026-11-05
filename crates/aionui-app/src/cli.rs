@@ -1390,39 +1390,56 @@ mod tests {
     /// which spent three to five failed tool calls each recovering from it.
     #[test]
     fn skills_cli_commands_in_the_index_are_parseable() {
-        let index = aionui_ai_agent::build_skills_index_text(&[aionui_ai_agent::SkillIndex {
-            name: "mermaid".to_owned(),
-            description: "Render Mermaid diagrams.".to_owned(),
-        }]);
-
-        // Pull out each taught invocation: the segment that starts at the helper
-        // binary placeholder and runs to the end of its backticked command.
-        let mut checked = 0usize;
-        for segment in index.split('`') {
-            let Some((_, after_bin)) = segment.split_once("\"$AIONUI_HELPER_BIN\"") else {
-                continue;
-            };
-            let argv: Vec<&str> = after_bin.split_whitespace().collect();
-            if argv.first() != Some(&"skills") {
-                continue;
-            }
-
-            let parsed = Cli::try_parse_from(std::iter::once("aioncore").chain(argv.iter().copied()));
-            assert!(
-                parsed.is_ok(),
-                "the skills index teaches `aioncore {}`, which the CLI rejects: {}",
-                argv.join(" "),
-                parsed.err().map(|e| e.to_string()).unwrap_or_default()
+        use aionui_ai_agent::SkillCommandSyntax;
+        // Each shell spells the helper binary its own way; both must reach a parseable argv.
+        const POSIX_BIN: &str = "\"$AIONUI_HELPER_BIN\"";
+        const POWERSHELL_BIN: &str = "& $env:AIONUI_HELPER_BIN";
+        for (syntax, expected) in [
+            (SkillCommandSyntax::Posix, [(POSIX_BIN, 3), (POWERSHELL_BIN, 0)]),
+            (
+                SkillCommandSyntax::PowerShellAndPosix,
+                [(POSIX_BIN, 3), (POWERSHELL_BIN, 3)],
+            ),
+        ] {
+            let index = aionui_ai_agent::build_skills_index_text_with(
+                &[aionui_ai_agent::SkillIndex {
+                    name: "mermaid".to_owned(),
+                    description: "Render Mermaid diagrams.".to_owned(),
+                }],
+                syntax,
             );
-            checked += 1;
-        }
 
-        assert!(
-            checked >= 3,
-            "expected the index to teach `skills show`, `skills cat` and `skills capabilities`; \
-             only {checked} parseable invocation(s) were found -- if the wording changed, update \
-             this extraction rather than dropping the guard"
-        );
+            for (placeholder, wanted) in expected {
+                // Pull out each taught invocation: the segment that starts at the helper
+                // binary placeholder and runs to the end of its backticked command.
+                let mut checked = 0usize;
+                for segment in index.split('`') {
+                    let Some((_, after_bin)) = segment.split_once(placeholder) else {
+                        continue;
+                    };
+                    let argv: Vec<&str> = after_bin.split_whitespace().collect();
+                    if argv.first() != Some(&"skills") {
+                        continue;
+                    }
+
+                    let parsed = Cli::try_parse_from(std::iter::once("aioncore").chain(argv.iter().copied()));
+                    assert!(
+                        parsed.is_ok(),
+                        "the {syntax:?} skills index teaches `aioncore {}`, which the CLI rejects: {}",
+                        argv.join(" "),
+                        parsed.err().map(|e| e.to_string()).unwrap_or_default()
+                    );
+                    checked += 1;
+                }
+
+                assert_eq!(
+                    checked, wanted,
+                    "expected the {syntax:?} index to teach `skills show`, `skills cat` and \
+                     `skills capabilities` through {placeholder} {wanted} time(s); found {checked} -- \
+                     if the wording changed, update this extraction rather than dropping the guard"
+                );
+            }
+        }
 
         // The failure mode this test exists for, stated directly: a positional
         // argument after `show` or `cat` is not a wording preference, it is a

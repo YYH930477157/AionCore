@@ -33,6 +33,31 @@ fn truncate_description(description: &str) -> String {
 /// and channel A is listed first because it is a normal tool call rather than
 /// text-matching plus an extra turn.
 pub fn build_skills_index_text(skills: &[SkillIndex]) -> String {
+    build_skills_index_text_with(skills, SkillCommandSyntax::for_host())
+}
+
+/// Which shell syntax the skills index teaches for the helper commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillCommandSyntax {
+    /// bash/sh/zsh: the only shells agents run on macOS and Linux.
+    Posix,
+    /// Windows agents run PowerShell (aionrs, Codex) or Git Bash (Claude Code).
+    PowerShellAndPosix,
+}
+
+impl SkillCommandSyntax {
+    /// Agents run on the same host as this backend, so its platform decides.
+    pub fn for_host() -> Self {
+        if cfg!(windows) {
+            Self::PowerShellAndPosix
+        } else {
+            Self::Posix
+        }
+    }
+}
+
+/// [`build_skills_index_text`] for an explicit syntax, so both forms stay testable on any host.
+pub fn build_skills_index_text_with(skills: &[SkillIndex], syntax: SkillCommandSyntax) -> String {
     if skills.is_empty() {
         return String::new();
     }
@@ -63,19 +88,42 @@ pub fn build_skills_index_text(skills: &[SkillIndex]) -> String {
     // not mention stdin either, so the obvious self-service path was a dead end.
     // `skills_cli_commands_in_the_index_are_parseable` in `aionui-app` pins the two
     // sides together so they cannot drift apart again.
+    match syntax {
+        SkillCommandSyntax::Posix => lines.push(
+            "To get a skill's full content, prefer running \
+             `printf '%s' '{\"name\":\"<name>\"}' | \"$AIONUI_HELPER_BIN\" skills show` — it also \
+             returns the skill's absolute directory, and \
+             `printf '%s' '{\"path\":\"<name>/<relative-path>\"}' | \"$AIONUI_HELPER_BIN\" skills cat` \
+             reads its supplementary files. Both read their arguments as a JSON object on stdin and \
+             take no positional arguments; run `\"$AIONUI_HELPER_BIN\" skills capabilities` for the \
+             full contract."
+                .to_string(),
+        ),
+        // On Windows the POSIX line is a PowerShell parse error ("Expressions are only
+        // allowed as the first element of a pipeline"), and `$AIONUI_HELPER_BIN` there
+        // names an unset PowerShell variable, not the environment. aionrs and Codex run
+        // PowerShell; Claude Code runs Git Bash. Teach both, each complete.
+        SkillCommandSyntax::PowerShellAndPosix => lines.extend([
+            "To get a skill's full content, prefer running `skills show` — it also returns the \
+             skill's absolute directory — and use `skills cat` for its supplementary files. Both \
+             read their arguments as a JSON object on stdin and take no positional arguments. Use \
+             the form for your shell:"
+                .to_string(),
+            "- PowerShell: `'{\"name\":\"<name>\"}' | & $env:AIONUI_HELPER_BIN skills show`, \
+             `'{\"path\":\"<name>/<relative-path>\"}' | & $env:AIONUI_HELPER_BIN skills cat`, \
+             `& $env:AIONUI_HELPER_BIN skills capabilities` (full contract)"
+                .to_string(),
+            "- bash/sh: `printf '%s' '{\"name\":\"<name>\"}' | \"$AIONUI_HELPER_BIN\" skills show`, \
+             `printf '%s' '{\"path\":\"<name>/<relative-path>\"}' | \"$AIONUI_HELPER_BIN\" skills cat`, \
+             `\"$AIONUI_HELPER_BIN\" skills capabilities` (full contract)"
+                .to_string(),
+        ]),
+    }
+    // "Cannot execute" alone left agents that CAN run commands stuck after one failed
+    // attempt: they did not consider the protocol meant for them.
     lines.push(
-        "To get a skill's full content, prefer running \
-         `printf '%s' '{\"name\":\"<name>\"}' | \"$AIONUI_HELPER_BIN\" skills show` — it also \
-         returns the skill's absolute directory, and \
-         `printf '%s' '{\"path\":\"<name>/<relative-path>\"}' | \"$AIONUI_HELPER_BIN\" skills cat` \
-         reads its supplementary files. Both read their arguments as a JSON object on stdin and \
-         take no positional arguments; run `\"$AIONUI_HELPER_BIN\" skills capabilities` for the \
-         full contract."
-            .to_string(),
-    );
-    lines.push(
-        "If you cannot execute commands, output `[LOAD_SKILL: <name>]` in your response instead \
-         and the content will be provided on the next turn."
+        "If you cannot execute commands, or the command fails, output `[LOAD_SKILL: <name>]` in \
+         your response instead and the content will be provided on the next turn."
             .to_string(),
     );
 
@@ -258,6 +306,44 @@ mod tests {
         assert!(command_at < protocol_at, "channel A is the preferred path");
         assert!(text.contains("$AIONUI_HELPER_BIN"));
         assert!(text.contains("skills cat"), "supplementary files need their own hint");
+    }
+
+    /// A Windows agent usually runs PowerShell, where the POSIX line is a parse
+    /// error; it needs a complete PowerShell form, and the bash form stays for Git Bash.
+    #[test]
+    fn windows_agents_get_a_powershell_form_and_keep_the_bash_one() {
+        let skills = [SkillIndex {
+            name: "cron".into(),
+            description: "d".into(),
+        }];
+        let windows = build_skills_index_text_with(&skills, SkillCommandSyntax::PowerShellAndPosix);
+        assert!(windows.contains("`'{\"name\":\"<name>\"}' | & $env:AIONUI_HELPER_BIN skills show`"));
+        assert!(windows.contains("`printf '%s' '{\"name\":\"<name>\"}' | \"$AIONUI_HELPER_BIN\" skills show`"));
+        let posix = build_skills_index_text_with(&skills, SkillCommandSyntax::Posix);
+        assert!(
+            !posix.contains("$env:"),
+            "macOS and Linux agents never see PowerShell syntax"
+        );
+        assert_eq!(
+            build_skills_index_text(&skills),
+            build_skills_index_text_with(&skills, SkillCommandSyntax::for_host())
+        );
+    }
+
+    /// An agent that can run commands but whose command failed must know the
+    /// protocol is meant for it too.
+    #[test]
+    fn the_fallback_also_covers_a_failed_command() {
+        for syntax in [SkillCommandSyntax::Posix, SkillCommandSyntax::PowerShellAndPosix] {
+            let text = build_skills_index_text_with(
+                &[SkillIndex {
+                    name: "cron".into(),
+                    description: "d".into(),
+                }],
+                syntax,
+            );
+            assert!(text.contains("or the command fails, output `[LOAD_SKILL: <name>]`"));
+        }
     }
 
     /// Discovery upstream returns from a HashMap, so an unsorted block would vary
