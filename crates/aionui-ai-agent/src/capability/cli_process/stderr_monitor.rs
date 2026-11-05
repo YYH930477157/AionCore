@@ -81,6 +81,13 @@ pub(super) fn force_kill(pid: u32, process_group_id: Option<u32>) -> Result<(), 
                 debug!(pid, "Process already exited before taskkill");
                 Ok(())
             }
+            // taskkill localizes its messages, and with /T it exits 255 when a member
+            // of the tree exited first, even though the target is gone. Whatever it
+            // printed, a target that no longer runs is the outcome the caller wanted.
+            Ok(output) if !windows_process_is_running(pid) => {
+                debug!(pid, code = ?output.status.code(), "taskkill failed but the process is gone");
+                Ok(())
+            }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let code = output.status.code();
@@ -111,6 +118,21 @@ fn taskkill_output_is_missing_process(output: &std::process::Output) -> bool {
 
     let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
     stderr.contains("no running instance") || stderr.contains("not found")
+}
+
+/// `tasklist` localizes its "no tasks match" notice, but a match is always a CSV row
+/// with the pid in quotes, whatever the display language. When `tasklist` itself
+/// cannot run, report the process as running so the original failure stands.
+#[cfg(windows)]
+fn windows_process_is_running(pid: u32) -> bool {
+    let filter = format!("PID eq {pid}");
+    match std::process::Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .output()
+    {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\"")),
+        Err(_) => true,
+    }
 }
 
 #[cfg(test)]
@@ -181,6 +203,19 @@ mod force_kill_tests {
         // unix `kill` non-zero exit and Windows `taskkill` rc=128 are mapped to
         // Ok in `force_kill`, so this should not produce an error.
         force_kill(pid, Some(pid)).expect("force_kill on dead pid must not error");
+    }
+
+    /// The liveness check must not depend on the display language: a localized
+    /// "no tasks" notice and a localized taskkill error were both misread before.
+    #[cfg(windows)]
+    #[test]
+    fn windows_liveness_check_reads_tasklist_in_any_language() {
+        let mut child = spawn_blocker();
+        let pid = child.id();
+        assert!(super::windows_process_is_running(pid), "a sleeping process is running");
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(!super::windows_process_is_running(pid), "a reaped process is gone");
     }
 
     #[cfg(unix)]
