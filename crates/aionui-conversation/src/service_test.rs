@@ -7718,6 +7718,29 @@ async fn create_writes_extra_skills_from_auto_inject_and_preset() {
 }
 
 #[tokio::test]
+async fn create_keeps_client_chosen_session_files() {
+    let (svc, _broadcaster, _repo, _task_mgr) = make_service();
+    let workspace = ensure_test_workspace_path();
+    let session_files = json!({
+        "dir": "C:\\repo\\.woody\\sessions\\2026-11-06_fix",
+        "work_dir": "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\work",
+        "output_dir": "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\output",
+    });
+
+    let req: CreateConversationRequest = serde_json::from_value(json!({
+        "type": "acp",
+        "name": "fix",
+        "extra": { "workspace": workspace, "backend": "claude", "session_files": session_files },
+    }))
+    .unwrap();
+    let created = svc.create("user-1", req).await.unwrap();
+    let stored = svc.get("user-1", &created.id).await.unwrap();
+
+    assert_eq!(created.extra["session_files"], session_files);
+    assert_eq!(stored.extra["session_files"], session_files);
+}
+
+#[tokio::test]
 async fn create_resolves_assistant_snapshot_and_updates_preferences() {
     let resolver = Arc::new(FixedSkillResolver {
         names: vec!["cron".into(), "todo-tracker".into()],

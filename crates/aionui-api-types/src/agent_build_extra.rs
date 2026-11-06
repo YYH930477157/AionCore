@@ -60,6 +60,32 @@ pub struct ForkSpec {
     pub last_turn_id: Option<String>,
 }
 
+/// The folders a conversation's agent keeps the files it creates in, chosen by
+/// the client when the conversation starts inside a user's own workspace and
+/// stored in `conversations.extra.session_files`. Other keys the client stores
+/// next to these (such as the parent folder) are ignored here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionFiles {
+    /// Scripts, scratch code, test data and other intermediate files.
+    pub work_dir: String,
+    /// Finished standalone deliverables the user asked for.
+    pub output_dir: String,
+}
+
+/// Read `session_files` without ever failing the surrounding build: a value of
+/// the wrong shape, or one with an empty path, is treated as absent. A strict
+/// field would turn one bad key into "Invalid ACP build options" for ACP and
+/// into dropped settings for aionrs, whose parser falls back to defaults.
+fn lenient_session_files<'de, D>(deserializer: D) -> Result<Option<SessionFiles>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value
+        .and_then(|value| serde_json::from_value::<SessionFiles>(value).ok())
+        .filter(|files| !files.work_dir.trim().is_empty() && !files.output_dir.trim().is_empty()))
+}
+
 /// ACP-specific fields extracted from `extra` in build task options.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AcpBuildExtra {
@@ -99,6 +125,13 @@ pub struct AcpBuildExtra {
     /// the first session open when no backend session id is bound yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork: Option<ForkSpec>,
+    /// Where the agent keeps the files it creates (see [`SessionFiles`]).
+    #[serde(
+        default,
+        deserialize_with = "lenient_session_files",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub session_files: Option<SessionFiles>,
 }
 
 /// Aionrs-specific fields extracted from `extra` in build task options.
@@ -136,6 +169,13 @@ pub struct AionrsBuildExtra {
     /// taken mid-history (`None` = fork at HEAD).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork: Option<ForkSpec>,
+    /// Where the agent keeps the files it creates (see [`SessionFiles`]).
+    #[serde(
+        default,
+        deserialize_with = "lenient_session_files",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub session_files: Option<SessionFiles>,
 }
 
 /// ACP model information returned by the ACP backend.
@@ -198,6 +238,57 @@ mod tests {
             serialized.get(legacy_key).is_none(),
             "legacy guide config must be ignored, not re-serialized"
         );
+    }
+
+    #[test]
+    fn session_files_parse_for_both_agent_families() {
+        let extra = serde_json::json!({
+            "backend": "claude",
+            "session_files": {
+                "dir": "C:\\repo\\.woody\\sessions\\2026-11-06_fix",
+                "work_dir": "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\work",
+                "output_dir": "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\output"
+            }
+        });
+        let expected = SessionFiles {
+            work_dir: "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\work".to_owned(),
+            output_dir: "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\output".to_owned(),
+        };
+
+        let acp: AcpBuildExtra = serde_json::from_value(extra.clone()).unwrap();
+        let aionrs: AionrsBuildExtra = serde_json::from_value(extra).unwrap();
+
+        assert_eq!(acp.session_files.as_ref(), Some(&expected));
+        assert_eq!(aionrs.session_files.as_ref(), Some(&expected));
+    }
+
+    #[test]
+    fn malformed_session_files_are_dropped_without_failing_the_build_options() {
+        for bad in [
+            serde_json::json!("C:\\repo"),
+            serde_json::json!({ "work_dir": "C:\\repo\\work" }),
+            serde_json::json!({ "work_dir": 7, "output_dir": "C:\\repo\\output" }),
+            serde_json::json!({ "work_dir": "  ", "output_dir": "C:\\repo\\output" }),
+            serde_json::Value::Null,
+        ] {
+            let extra = serde_json::json!({ "backend": "claude", "preset_context": "rules", "session_files": bad });
+
+            let acp: AcpBuildExtra = serde_json::from_value(extra.clone()).unwrap();
+            let aionrs: AionrsBuildExtra = serde_json::from_value(extra).unwrap();
+
+            assert!(acp.session_files.is_none(), "{bad} must be ignored for ACP");
+            assert_eq!(
+                acp.preset_context.as_deref(),
+                Some("rules"),
+                "other fields must survive {bad}"
+            );
+            assert!(aionrs.session_files.is_none(), "{bad} must be ignored for aionrs");
+            assert_eq!(
+                aionrs.backend.as_deref(),
+                Some("claude"),
+                "other fields must survive {bad}"
+            );
+        }
     }
 
     #[test]

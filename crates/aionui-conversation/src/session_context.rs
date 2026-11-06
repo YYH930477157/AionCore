@@ -1122,6 +1122,55 @@ mod tests {
         assert!(acp.session_snapshot.is_none());
     }
 
+    fn session_files_extra() -> serde_json::Value {
+        serde_json::json!({
+            "dir": "C:\\repo\\.woody\\sessions\\2026-11-06_fix",
+            "work_dir": "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\work",
+            "output_dir": "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\output"
+        })
+    }
+
+    #[tokio::test]
+    async fn stored_session_files_reach_both_agent_families() {
+        let repos = setup().await;
+        upsert_builtin(&repos, "builtin-claude-test", "claude").await;
+        let acp_row = row(
+            "acp",
+            serde_json::json!({ "backend": "claude", "session_files": session_files_extra() }),
+            None,
+        );
+        let aionrs_row = row(
+            "aionrs",
+            serde_json::json!({ "session_files": session_files_extra() }),
+            None,
+        );
+
+        let acp = acp_context(repos.builder().build(&acp_row).await.unwrap());
+        let aionrs = aionrs_context(repos.builder().build(&aionrs_row).await.unwrap());
+
+        for files in [acp.config.session_files, aionrs.config.session_files] {
+            let files = files.expect("session_files must survive the build context");
+            assert_eq!(files.work_dir, "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\work");
+            assert_eq!(files.output_dir, "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\output");
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_session_files_do_not_break_an_acp_conversation() {
+        let repos = setup().await;
+        upsert_builtin(&repos, "builtin-claude-test", "claude").await;
+        let row = row(
+            "acp",
+            serde_json::json!({ "backend": "claude", "thought_level": "high", "session_files": "C:\\repo" }),
+            None,
+        );
+
+        let acp = acp_context(repos.builder().build(&row).await.unwrap());
+
+        assert!(acp.config.session_files.is_none());
+        assert_eq!(acp.config.thought_level.as_deref(), Some("high"));
+    }
+
     #[tokio::test]
     async fn acp_team_extra_is_exposed_as_typed_context() {
         let repos = setup().await;

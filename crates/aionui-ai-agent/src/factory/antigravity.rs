@@ -132,11 +132,16 @@ pub(super) async fn build(
     )
     .await;
     // agy has no prompt pipeline, so compose the rules block here and let the
-    // backend prepend it to the first `-p` invocation.
+    // backend prepend it to the first `-p` invocation. The session file rules
+    // ride along with the assistant's own rules.
+    let preset_context = crate::capability::session_files::append_session_files_rules(
+        config.preset_context.clone(),
+        config.session_files.as_ref(),
+    );
     delivery.injected_prefix = crate::factory::compose_injected_prefix_for(
         deps.as_ref(),
         &ctx.user_id,
-        config.preset_context.as_deref(),
+        preset_context.as_deref(),
         &config.skills,
         &delivery.plan.mode,
     )

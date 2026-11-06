@@ -45,6 +45,21 @@ fn merge_skill_index_into_system_prompt(system_prompt: Option<String>, index: &s
     }
 }
 
+/// The system prompt, then the assistant's preset rules, then the rules for
+/// where this conversation keeps the files it creates.
+fn merge_rules_into_system_prompt(
+    system_prompt: Option<String>,
+    preset_rules: Option<String>,
+    session_files: Option<&aionui_api_types::SessionFiles>,
+) -> Option<String> {
+    let with_rules = match (system_prompt, preset_rules) {
+        (Some(existing), Some(rules)) => Some(format!("{existing}\n\n{rules}")),
+        (existing, None) => existing,
+        (None, rules) => rules,
+    };
+    crate::capability::session_files::append_session_files_rules(with_rules, session_files)
+}
+
 pub(super) async fn build(
     deps: Arc<AgentFactoryDeps>,
     build_context: AionrsSessionBuildContext,
@@ -59,12 +74,13 @@ pub(super) async fn build(
     // `init_history` injection of `[Assistant System Rules]`.
     // AionrsBuildExtra parses `skills` so Team preset snapshots preserve the
     // target contract.
-    if let Some(rules) = overrides.preset_rules.take() {
-        overrides.system_prompt = Some(match overrides.system_prompt.take() {
-            Some(existing) => format!("{existing}\n\n{rules}"),
-            None => rules,
-        });
-    }
+    // Then where this conversation keeps the files it creates; the system prompt
+    // is rebuilt on every open, so a resumed session gets those rules again.
+    overrides.system_prompt = merge_rules_into_system_prompt(
+        overrides.system_prompt.take(),
+        overrides.preset_rules.take(),
+        overrides.session_files.as_ref(),
+    );
 
     // Fold the skills index into the system prompt.
     //
@@ -2365,12 +2381,11 @@ mod tests {
         });
         let mut overrides: AionrsBuildExtra = serde_json::from_value(json).unwrap();
 
-        if let Some(rules) = overrides.preset_rules.take() {
-            overrides.system_prompt = Some(match overrides.system_prompt.take() {
-                Some(existing) => format!("{existing}\n\n{rules}"),
-                None => rules,
-            });
-        }
+        overrides.system_prompt = merge_rules_into_system_prompt(
+            overrides.system_prompt.take(),
+            overrides.preset_rules.take(),
+            overrides.session_files.as_ref(),
+        );
 
         assert_eq!(
             overrides.system_prompt.as_deref(),
@@ -2387,12 +2402,11 @@ mod tests {
         });
         let mut overrides: AionrsBuildExtra = serde_json::from_value(json).unwrap();
 
-        if let Some(rules) = overrides.preset_rules.take() {
-            overrides.system_prompt = Some(match overrides.system_prompt.take() {
-                Some(existing) => format!("{existing}\n\n{rules}"),
-                None => rules,
-            });
-        }
+        overrides.system_prompt = merge_rules_into_system_prompt(
+            overrides.system_prompt.take(),
+            overrides.preset_rules.take(),
+            overrides.session_files.as_ref(),
+        );
 
         assert_eq!(
             overrides.system_prompt.as_deref(),
@@ -2407,13 +2421,37 @@ mod tests {
         });
         let mut overrides: AionrsBuildExtra = serde_json::from_value(json).unwrap();
 
-        if let Some(rules) = overrides.preset_rules.take() {
-            overrides.system_prompt = Some(match overrides.system_prompt.take() {
-                Some(existing) => format!("{existing}\n\n{rules}"),
-                None => rules,
-            });
-        }
+        overrides.system_prompt = merge_rules_into_system_prompt(
+            overrides.system_prompt.take(),
+            overrides.preset_rules.take(),
+            overrides.session_files.as_ref(),
+        );
 
         assert_eq!(overrides.system_prompt.as_deref(), Some("Be concise."));
+    }
+
+    #[test]
+    fn session_file_rules_follow_the_preset_rules() {
+        let json = serde_json::json!({
+            "system_prompt": "Be concise.",
+            "preset_rules": "You are a data analyst.",
+            "session_files": {
+                "dir": "C:\\repo\\.woody\\chat-files\\2026-11-06_fix",
+                "work_dir": "C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\work",
+                "output_dir": "C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\output"
+            }
+        });
+        let mut overrides: AionrsBuildExtra = serde_json::from_value(json).unwrap();
+
+        let prompt = merge_rules_into_system_prompt(
+            overrides.system_prompt.take(),
+            overrides.preset_rules.take(),
+            overrides.session_files.as_ref(),
+        )
+        .unwrap();
+
+        assert!(prompt.starts_with("Be concise.\n\nYou are a data analyst.\n\n## Files you create\n"));
+        assert!(prompt.contains("`C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\work`"));
+        assert!(prompt.contains("`C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\output`"));
     }
 }

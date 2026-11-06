@@ -24,6 +24,15 @@ async fn fixture_params(
     preset_context: Option<&str>,
     is_custom_workspace: bool,
 ) -> Arc<AcpSessionParams> {
+    fixture_params_with_files(backend, preset_context, is_custom_workspace, None).await
+}
+
+async fn fixture_params_with_files(
+    backend: &str,
+    preset_context: Option<&str>,
+    is_custom_workspace: bool,
+    session_files: Option<aionui_api_types::SessionFiles>,
+) -> Arc<AcpSessionParams> {
     let db = init_database_memory().await.unwrap();
     let repo = Arc::new(SqliteAgentMetadataRepository::new(db.pool().clone()));
     let registry = AgentRegistry::new(repo);
@@ -52,6 +61,7 @@ async fn fixture_params(
         session_mcp_servers: vec![],
         user_id: None,
         fork: None,
+        session_files,
     };
 
     Arc::new(
@@ -128,6 +138,50 @@ async fn brand_new_first_prompt_injects_preset_context() {
         !session.take_pending_session_new_prelude(),
         "pending_session_new_prelude must be false after pre_send consumed it"
     );
+}
+
+/// The chat's own folders ride in the first prompt's rules block, after the
+/// assistant's rules and before the user's text, for each ACP CLI.
+#[tokio::test(flavor = "current_thread")]
+async fn first_prompt_carries_the_session_file_rules() {
+    for backend in ["claude", "codex"] {
+        let files = aionui_api_types::SessionFiles {
+            work_dir: "C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\work".into(),
+            output_dir: "C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\output".into(),
+        };
+        let params = fixture_params_with_files(backend, Some("Rule A"), true, Some(files)).await;
+        let skill_manager = fixture_skill_manager();
+        let runtime = fixture_runtime();
+        let mut session = AcpSession::new(None, None, HashMap::new());
+        session.mark_pending_session_new_prelude();
+        let mut ctx = PromptCtx {
+            session: &mut session,
+            params: &params,
+            skill_manager: &skill_manager,
+            runtime: &runtime,
+        };
+
+        let out = make_pipeline().pre_send(&mut ctx, "hello".into()).await;
+
+        let rules = out.find("Rule A").expect("assistant rules missing");
+        let files_block = out.find("## Files you create").expect("session file rules missing");
+        assert!(
+            rules < files_block,
+            "{backend}: session file rules must follow the assistant rules: {out}"
+        );
+        assert!(
+            out.contains("`C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\work`"),
+            "{backend}: {out}"
+        );
+        assert!(
+            out.contains("`C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\output`"),
+            "{backend}: {out}"
+        );
+        assert!(
+            out.ends_with("hello"),
+            "{backend}: user content should be at the end: {out}"
+        );
+    }
 }
 
 /// Second prompt: no prelude, no reminder — pure passthrough.

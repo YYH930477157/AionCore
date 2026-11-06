@@ -71,7 +71,7 @@ pub async fn assemble_acp_params(
     dump_prompts: bool,
 ) -> AcpSessionParams {
     let mcp_servers = resolve_mcp_servers(&config, user_mcp_servers);
-    let preset_context = compose_preset_context(config.preset_context.as_deref());
+    let preset_context = compose_preset_context(config.preset_context.as_deref(), config.session_files.as_ref());
 
     AcpSessionParams {
         conversation_id,
@@ -102,12 +102,17 @@ fn resolve_mcp_servers(config: &AcpBuildExtra, user_mcp_servers: Vec<McpServer>)
     servers
 }
 
-/// Compose first-message preset context.
-fn compose_preset_context(base_preset_context: Option<&str>) -> Option<String> {
-    base_preset_context
+/// Compose first-message preset context: the assistant's rules, then where
+/// this conversation keeps the files it creates.
+fn compose_preset_context(
+    base_preset_context: Option<&str>,
+    session_files: Option<&aionui_api_types::SessionFiles>,
+) -> Option<String> {
+    let base = base_preset_context
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(str::to_owned)
+        .map(str::to_owned);
+    crate::capability::session_files::append_session_files_rules(base, session_files)
 }
 
 fn team_mcp_server(cfg: &TeamMcpStdioConfig) -> McpServer {
@@ -129,12 +134,32 @@ mod tests {
     #[test]
     fn compose_preset_context_returns_trimmed_base_only() {
         assert_eq!(
-            compose_preset_context(Some("  frozen rules  ")),
+            compose_preset_context(Some("  frozen rules  "), None),
             Some("frozen rules".to_owned())
         );
-        let result = compose_preset_context(Some("  "));
+        let result = compose_preset_context(Some("  "), None);
         assert_eq!(result, None);
-        assert_eq!(compose_preset_context(None), None);
+        assert_eq!(compose_preset_context(None, None), None);
+    }
+
+    fn session_files() -> aionui_api_types::SessionFiles {
+        aionui_api_types::SessionFiles {
+            work_dir: "/repo/.woody/sessions/2026-11-06_fix/work".into(),
+            output_dir: "/repo/.woody/sessions/2026-11-06_fix/output".into(),
+        }
+    }
+
+    #[test]
+    fn compose_preset_context_adds_session_files_after_the_rules() {
+        let files = session_files();
+
+        let with_rules = compose_preset_context(Some(" frozen rules "), Some(&files)).unwrap();
+        let alone = compose_preset_context(None, Some(&files)).unwrap();
+
+        assert!(with_rules.starts_with("frozen rules\n\n## Files you create\n"));
+        assert!(with_rules.contains("`/repo/.woody/sessions/2026-11-06_fix/work`"));
+        assert!(alone.starts_with("## Files you create\n"));
+        assert!(alone.contains("`/repo/.woody/sessions/2026-11-06_fix/output`"));
     }
 
     fn user_stdio(name: &str) -> McpServer {
@@ -222,6 +247,7 @@ mod tests {
         assert!(params.dump_prompts);
         assert_eq!(params.preset_context.as_deref(), Some("frozen rules"));
         assert_eq!(params.config.skills, vec!["pdf"]);
+        assert_eq!(params.config.session_files, None);
         assert_eq!(
             params.config.mcp_server_ids.as_deref(),
             Some(&["mcp-docs".to_owned()][..])
