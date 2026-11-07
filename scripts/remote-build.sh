@@ -17,6 +17,17 @@ step() { echo "== $1 ($(date +%T), ${SECONDS}s)"; }
 
 trap 'echo "== FAILED at line $LINENO (${SECONDS}s)"' ERR
 
+# Fail now rather than at the final link when the disk is nearly full.
+step "disk space"
+need_gb=10
+$run_tests && need_gb=40
+free_gb=$(($(df --output=avail -k "$HOME" | tail -n 1) / 1024 / 1024))
+echo "free ${free_gb} GB, need ${need_gb} GB"
+if ((free_gb < need_gb)); then
+  echo "== FAILED: only ${free_gb} GB free on the build host, need ${need_gb} GB (${SECONDS}s)"
+  exit 1
+fi
+
 step "checkout $tag"
 git -C "$repo" fetch --force --tags origin
 git -C "$repo" checkout --force --detach "refs/tags/$tag"
@@ -25,7 +36,18 @@ git log --oneline -1
 
 if $run_tests; then
   step "workspace tests"
-  cargo nextest run --workspace --locked
+  tests_passed=true
+  cargo nextest run --workspace --locked || tests_passed=false
+  # The test build in target/debug grows by many GB per release; left alone it
+  # reached 105 GB and filled the host's disk (woody.11). Remove it whether or
+  # not the tests passed. The next --test run rebuilds it from scratch, while
+  # the release targets below stay warm.
+  step "remove test build"
+  cargo clean --profile dev
+  if ! $tests_passed; then
+    echo "== FAILED: workspace tests (${SECONDS}s)"
+    exit 1
+  fi
 fi
 
 rm -rf "$dist"
