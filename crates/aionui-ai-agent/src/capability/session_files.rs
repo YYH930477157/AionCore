@@ -7,9 +7,19 @@
 
 use aionui_api_types::SessionFiles;
 
+/// Said only when a folder path has non-ASCII characters (the folder names follow the UI
+/// language). In a live run MinGW `ld` could not open `-o` with such a full path even
+/// though the system code page covered the characters; relative paths from inside the
+/// folder worked.
+const NON_ASCII_PATH_HINT: &str = "These paths contain non-ASCII characters, and some command-line tools, such as compilers and linkers, cannot open them. \
+     When a tool reads or writes files in these folders, run it with the folder as its working directory and give it relative paths \
+     (for example `-o test.exe`) rather than full paths.";
+
 /// The rules block for one conversation's folders.
 pub(crate) fn session_files_rules(files: &SessionFiles) -> String {
-    format!(
+    let work = files.work_dir.trim();
+    let output = files.output_dir.trim();
+    let mut text = format!(
         "## Files you create\n\
          \n\
          This conversation has its own folders for the files you create. Use them so the project stays clean:\n\
@@ -18,10 +28,13 @@ pub(crate) fn session_files_rules(files: &SessionFiles) -> String {
          - Output folder: `{output}`. Put finished deliverables the user asked for here, such as reports, exported data, charts or generated documents, unless the user names another place.\n\
          \n\
          Changes to the project itself (its source code, tests, configuration and documentation) are made in place in the project, not in these folders. \
-         Create a folder when you first write a file into it. When you tell the user about a file in these folders, give its full path.",
-        work = files.work_dir.trim(),
-        output = files.output_dir.trim(),
-    )
+         Create a folder when you first write a file into it. When you tell the user about a file in these folders, give its full path."
+    );
+    if !work.is_ascii() || !output.is_ascii() {
+        text.push_str("\n\n");
+        text.push_str(NON_ASCII_PATH_HINT);
+    }
+    text
 }
 
 /// Append the rules block to existing rules, keeping `None` when there is
@@ -54,6 +67,25 @@ mod tests {
         assert!(text.contains("Output folder: `C:\\repo\\.woody\\会话文件\\2026-11-06_修复串口\\成品`"));
         assert!(text.contains("made in place in the project, not in these folders"));
         assert!(text.contains("unless the user names another place"));
+    }
+
+    #[test]
+    fn non_ascii_folders_get_the_relative_path_hint() {
+        let text = session_files_rules(&files());
+
+        assert!(text.ends_with(NON_ASCII_PATH_HINT));
+        assert!(text.contains("give its full path.\n\nThese paths contain non-ASCII characters"));
+    }
+
+    #[test]
+    fn ascii_folders_get_no_path_hint() {
+        let text = session_files_rules(&SessionFiles {
+            work_dir: "C:\\repo\\.woody\\chat-files\\2026-11-06_fix_uart\\work".to_owned(),
+            output_dir: "C:\\repo\\.woody\\chat-files\\2026-11-06_fix_uart\\output".to_owned(),
+        });
+
+        assert!(!text.contains("non-ASCII"));
+        assert!(text.ends_with("give its full path."));
     }
 
     #[test]
