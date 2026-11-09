@@ -660,6 +660,7 @@ mod aionrs_config_option_tests {
             compat_overrides: Default::default(),
             session_directory: std::env::temp_dir().join("aionrs-agent-task-test-sessions"),
             session_mode: None,
+            thought_level: None,
             skills: Vec::new(),
             extra_mcp_servers: std::collections::HashMap::new(),
             bedrock_config: None,

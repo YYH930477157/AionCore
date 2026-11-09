@@ -134,6 +134,7 @@ pub struct AionrsAgentManager {
     mcp_managers: Vec<Arc<McpManager>>,
     approval_manager: Arc<ToolApprovalManager>,
     confirmations: Arc<RwLock<Vec<Confirmation>>>,
+    reasoning_effort: RwLock<Option<String>>,
     final_input_dump: Option<AionrsFinalInputDumpContext>,
     /// Signalled by `cancel()` to abort an in-flight `engine.run()` via
     /// `tokio::select!` in `send_message()`.
@@ -268,6 +269,34 @@ impl AionrsAgentManager {
             .map_err(|e| AgentError::internal(format!("Agent bootstrap failed: {e}")))?;
 
         let mut engine = result.engine;
+        let mut reasoning_effort = None;
+        if let Some(thought_level) = config_extra.thought_level.as_deref() {
+            if engine.compat().supports_effort()
+                && engine
+                    .compat()
+                    .effort_levels()
+                    .iter()
+                    .any(|level| level == thought_level)
+            {
+                engine.set_initial_reasoning_effort(Some(thought_level.to_owned()));
+                reasoning_effort = Some(thought_level.to_owned());
+                info!(
+                    conversation_id = %conversation_id,
+                    provider = %config_extra.provider,
+                    model = %config_extra.model,
+                    thought_level,
+                    "Aionrs initial reasoning effort applied"
+                );
+            } else {
+                warn!(
+                    conversation_id = %conversation_id,
+                    provider = %config_extra.provider,
+                    model = %config_extra.model,
+                    thought_level,
+                    "Aionrs initial reasoning effort ignored because it is unsupported"
+                );
+            }
+        }
         if !is_resume && let Err(e) = engine.init_session(&provider_label, &workspace, Some(&conversation_id)) {
             error!(
                 conversation_id = %conversation_id,
@@ -313,6 +342,7 @@ impl AionrsAgentManager {
             mcp_managers: result.mcp_managers,
             approval_manager,
             confirmations,
+            reasoning_effort: RwLock::new(reasoning_effort),
             final_input_dump,
             cancel_notify: Arc::new(Notify::new()),
             turn_finished_notify: Arc::new(Notify::new()),
@@ -618,27 +648,51 @@ impl AionrsAgentManager {
     }
 
     pub async fn config_options(&self) -> Result<GetConfigOptionsResponse, AgentError> {
-        Ok(GetConfigOptionsResponse {
-            config_options: vec![aionrs_mode_config_option(self.approval_manager.current_mode())],
-        })
+        let engine = self.engine.lock().await;
+        let current_effort = self
+            .reasoning_effort
+            .read()
+            .map_err(|_| AgentError::internal("Aionrs reasoning effort state is unavailable"))?
+            .clone();
+        let mut config_options = vec![aionrs_mode_config_option(self.approval_manager.current_mode())];
+        if let Some(option) = aionrs_effort_config_option(&engine, current_effort) {
+            config_options.push(option);
+        }
+        Ok(GetConfigOptionsResponse { config_options })
     }
 
     pub async fn set_config_option(&self, option_id: &str, value: &str) -> Result<SetConfigOptionResponse, AgentError> {
         let option_id = option_id.trim();
         let value = value.trim();
 
-        if option_id != AIONRS_MODE_OPTION_ID {
+        if option_id == AIONRS_EFFORT_OPTION_ID {
+            let mut engine = self.engine.lock().await;
+            let is_valid_level = engine.compat().supports_effort()
+                && engine.compat().effort_levels().iter().any(|level| level == &value);
+            if !is_valid_level {
+                return Err(AgentError::bad_request(format!(
+                    "Value '{value}' is not selectable for config option '{option_id}'"
+                )));
+            }
+
+            engine.apply_config_update(None, None, None, None, Some(value.to_owned()), None);
+            *self
+                .reasoning_effort
+                .write()
+                .map_err(|_| AgentError::internal("Aionrs reasoning effort state is unavailable"))? =
+                Some(value.to_owned());
+        } else if option_id != AIONRS_MODE_OPTION_ID {
             return Err(AgentError::bad_request(format!(
                 "Config option '{option_id}' is not available"
             )));
-        }
-        if !is_aionrs_session_mode(value) {
+        } else if !is_aionrs_session_mode(value) {
             return Err(AgentError::bad_request(format!(
                 "Value '{value}' is not selectable for config option '{option_id}'"
             )));
+        } else {
+            self.set_mode(value).await?;
         }
 
-        self.set_mode(value).await?;
         Ok(SetConfigOptionResponse {
             confirmation: ConfigOptionConfirmation::Observed,
             config_options: Some(self.config_options().await?.config_options),
@@ -651,6 +705,7 @@ impl AionrsAgentManager {
 }
 
 const AIONRS_MODE_OPTION_ID: &str = "mode";
+const AIONRS_EFFORT_OPTION_ID: &str = "reasoning_effort";
 
 fn is_aionrs_session_mode(s: &str) -> bool {
     matches!(s, "default" | "auto_edit" | "yolo")
@@ -670,6 +725,37 @@ fn aionrs_mode_config_option(current_value: String) -> AcpConfigOptionDto {
             aionrs_mode_select_option("auto_edit", "Auto Edit"),
             aionrs_mode_select_option("yolo", "YOLO"),
         ],
+    }
+}
+
+fn aionrs_effort_config_option(engine: &AgentEngine, current_value: Option<String>) -> Option<AcpConfigOptionDto> {
+    let compat = engine.compat();
+    if !compat.supports_effort() || compat.effort_levels().is_empty() {
+        return None;
+    }
+
+    Some(AcpConfigOptionDto {
+        id: AIONRS_EFFORT_OPTION_ID.to_owned(),
+        name: Some("Reasoning effort".to_owned()),
+        label: None,
+        description: None,
+        category: Some("thought_level".to_owned()),
+        option_type: "select".to_owned(),
+        current_value,
+        options: compat
+            .effort_levels()
+            .iter()
+            .map(|value| aionrs_effort_select_option(value))
+            .collect(),
+    })
+}
+
+fn aionrs_effort_select_option(value: &str) -> AcpConfigSelectOptionDto {
+    AcpConfigSelectOptionDto {
+        value: value.to_owned(),
+        name: Some(value.to_owned()),
+        label: None,
+        description: None,
     }
 }
 

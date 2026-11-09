@@ -213,6 +213,7 @@ pub(super) async fn build(
         compat_overrides,
         session_directory,
         session_mode: overrides.session_mode,
+        thought_level: overrides.thought_level,
         skills: resolved_skills,
         extra_mcp_servers,
         bedrock_config,

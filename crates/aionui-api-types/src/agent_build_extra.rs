@@ -152,6 +152,8 @@ pub struct AionrsBuildExtra {
     #[serde(default)]
     pub session_mode: Option<String>,
     #[serde(default)]
+    pub thought_level: Option<String>,
+    #[serde(default)]
     pub team_mcp_stdio_config: Option<TeamMcpStdioConfig>,
     #[serde(default)]
     pub mcp_server_ids: Option<Vec<String>>,
@@ -311,5 +313,17 @@ mod tests {
             serialized.get("max_tokens").is_none(),
             "legacy max_tokens must be ignored, not re-serialized"
         );
+    }
+
+    #[test]
+    fn aionrs_build_extra_round_trips_thought_level_seed() {
+        let parsed: AionrsBuildExtra = serde_json::from_value(serde_json::json!({
+            "backend": "aionrs",
+            "thought_level": "high"
+        }))
+        .unwrap();
+
+        let serialized = serde_json::to_value(parsed).unwrap();
+        assert_eq!(serialized["thought_level"], "high");
     }
 }

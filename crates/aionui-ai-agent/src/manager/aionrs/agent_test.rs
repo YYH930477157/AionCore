@@ -8,6 +8,8 @@ use aion_config::config::{McpServerConfig, TransportType};
 use tokio::sync::broadcast::error::TryRecvError;
 use tokio::time::timeout;
 
+use aionui_api_types::ConfigOptionConfirmation;
+
 use super::*;
 use crate::agent_task::IAgentTask;
 use crate::protocol::events::FinishEventData;
@@ -37,12 +39,20 @@ fn make_test_config() -> AionrsResolvedConfig {
         compat_overrides: Default::default(),
         session_directory: env::temp_dir().join("aionrs-test-sessions"),
         session_mode: None,
+        thought_level: None,
         skills: Vec::new(),
         extra_mcp_servers: HashMap::new(),
         bedrock_config: None,
         runtime_env: Vec::new(),
         prompt_dump_dir: None,
     }
+}
+
+fn make_effort_test_config() -> AionrsResolvedConfig {
+    let mut config = make_test_config();
+    config.provider = "openai".into();
+    config.model = "gpt-test".into();
+    config
 }
 
 fn make_cli_args(project_dir: PathBuf, provider: &str, model: &str) -> CliArgs {
@@ -201,6 +211,133 @@ async fn aionrs_agent_subscribe_returns_receiver() {
         .await
         .unwrap();
     let _rx = agent.subscribe();
+}
+
+#[tokio::test]
+async fn aionrs_exposes_provider_effort_levels_as_thought_level_option() {
+    let agent = AionrsAgentManager::new(
+        "conv-aionrs-effort".into(),
+        "/project".into(),
+        make_effort_test_config(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let options = agent.config_options().await.unwrap().config_options;
+    let effort = options
+        .iter()
+        .find(|option| option.category.as_deref() == Some("thought_level"))
+        .expect("aionrs should expose effort when the provider supports it");
+
+    assert_eq!(effort.id, "reasoning_effort");
+    assert_eq!(effort.option_type, "select");
+    assert_eq!(
+        effort
+            .options
+            .iter()
+            .map(|option| option.value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["low", "medium", "high"]
+    );
+}
+
+#[tokio::test]
+async fn aionrs_runtime_effort_switch_is_observed() {
+    let agent = AionrsAgentManager::new(
+        "conv-aionrs-effort-switch".into(),
+        "/project".into(),
+        make_effort_test_config(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let response = agent.set_config_option("reasoning_effort", "high").await.unwrap();
+
+    assert_eq!(response.confirmation, ConfigOptionConfirmation::Observed);
+    let options = response.config_options.unwrap();
+    let effort = options
+        .iter()
+        .find(|option| option.id == "reasoning_effort")
+        .expect("response should include the effort option");
+    assert_eq!(effort.current_value.as_deref(), Some("high"));
+}
+
+#[tokio::test]
+async fn aionrs_rejects_invalid_effort_without_overwriting_current_value() {
+    let agent = AionrsAgentManager::new(
+        "conv-aionrs-effort-invalid".into(),
+        "/project".into(),
+        make_effort_test_config(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    agent.set_config_option("reasoning_effort", "high").await.unwrap();
+    let error = agent.set_config_option("reasoning_effort", "max").await.unwrap_err();
+
+    assert!(
+        matches!(&error, AgentError::BadRequest(message) if message == "Value 'max' is not selectable for config option 'reasoning_effort'"),
+        "unexpected error: {error:?}"
+    );
+    let options = agent.config_options().await.unwrap().config_options;
+    let effort = options
+        .iter()
+        .find(|option| option.id == "reasoning_effort")
+        .expect("effort option should remain available");
+    assert_eq!(effort.current_value.as_deref(), Some("high"));
+}
+
+#[tokio::test]
+async fn aionrs_applies_valid_initial_effort_seed() {
+    let mut config = make_effort_test_config();
+    config.thought_level = Some("high".into());
+
+    let agent = AionrsAgentManager::new("conv-aionrs-effort-seed".into(), "/project".into(), config, None)
+        .await
+        .unwrap();
+
+    assert_eq!(agent.reasoning_effort.read().unwrap().as_deref(), Some("high"));
+}
+
+#[tokio::test]
+async fn aionrs_ignores_invalid_initial_effort_seed() {
+    let mut config = make_effort_test_config();
+    config.thought_level = Some("max".into());
+
+    let agent = AionrsAgentManager::new(
+        "conv-aionrs-effort-invalid-seed".into(),
+        "/project".into(),
+        config,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(agent.reasoning_effort.read().unwrap().as_deref(), None);
+}
+
+#[tokio::test]
+async fn aionrs_hides_effort_option_when_provider_does_not_support_it() {
+    let agent = AionrsAgentManager::new(
+        "conv-aionrs-no-effort".into(),
+        "/project".into(),
+        make_test_config(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let options = agent.config_options().await.unwrap().config_options;
+
+    assert!(
+        options
+            .iter()
+            .all(|option| option.category.as_deref() != Some("thought_level")),
+        "unsupported providers must not expose a thought-level picker"
+    );
 }
 
 #[tokio::test]

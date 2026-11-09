@@ -160,6 +160,8 @@ pub struct AionrsResolvedConfig {
     pub session_directory: PathBuf,
     /// Session mode (default, auto_edit, yolo).
     pub session_mode: Option<String>,
+    /// Provider-supported reasoning effort seed for the first turn.
+    pub thought_level: Option<String>,
     /// Resolved skill names from the conversation snapshot.
     pub skills: Vec<String>,
     /// Extra MCP servers to inject (team coordination or guide).
