@@ -231,6 +231,21 @@ impl AionrsAgentManager {
         config.session.enabled = true;
         config.session.directory = config_extra.session_directory.to_string_lossy().into_owned();
         config.compat.image_input = Some(image_input_capability);
+        if config_extra.provider == "openai" {
+            let reasoning = aionui_common::model_reasoning::resolve_model_reasoning(
+                &config_extra.model,
+                config_extra.compat_overrides.reasoning.as_ref(),
+            );
+            config.compat.reasoning.supports_effort = Some(reasoning.supported != Some(false));
+            config.compat.reasoning.effort_levels = Some(reasoning.selectable_efforts());
+            info!(
+                conversation_id = %conversation_id,
+                support = ?reasoning.supported,
+                source = if config_extra.compat_overrides.reasoning.is_some() { "provider" } else if reasoning.supported.is_some() { "catalog" } else { "unknown" },
+                levels = ?config.compat.reasoning.effort_levels,
+                "Resolved Aionrs model reasoning capability"
+            );
+        }
         if let Some(window) = config_extra.context_window {
             apply_context_window(&mut config.compact, window);
         }
@@ -269,16 +284,21 @@ impl AionrsAgentManager {
             .map_err(|e| AgentError::internal(format!("Agent bootstrap failed: {e}")))?;
 
         let mut engine = result.engine;
-        let mut reasoning_effort = None;
+        // Clear restored overrides unless a currently valid choice is supplied.
+        engine.set_initial_reasoning_effort(None);
+        let mut reasoning_effort = (config_extra.provider == "openai").then(|| "none".to_owned());
         if let Some(thought_level) = config_extra.thought_level.as_deref() {
-            if engine.compat().supports_effort()
-                && engine
-                    .compat()
-                    .effort_levels()
-                    .iter()
-                    .any(|level| level == thought_level)
+            let wire_effort = aionrs_wire_effort(thought_level);
+            if thought_level == "none"
+                || (engine.compat().supports_effort()
+                    && engine
+                        .compat()
+                        .effort_levels()
+                        .iter()
+                        .any(|level| Some(level.as_str()) == wire_effort))
             {
-                engine.set_initial_reasoning_effort(Some(thought_level.to_owned()));
+                // `none` is a UI sentinel, never a literal provider parameter.
+                engine.set_initial_reasoning_effort(wire_effort.map(str::to_owned));
                 reasoning_effort = Some(thought_level.to_owned());
                 info!(
                     conversation_id = %conversation_id,
@@ -667,15 +687,22 @@ impl AionrsAgentManager {
 
         if option_id == AIONRS_EFFORT_OPTION_ID {
             let mut engine = self.engine.lock().await;
+            let wire_effort = aionrs_wire_effort(value);
             let is_valid_level = engine.compat().supports_effort()
-                && engine.compat().effort_levels().iter().any(|level| level == &value);
+                && (value == "none"
+                    || engine
+                        .compat()
+                        .effort_levels()
+                        .iter()
+                        .any(|level| Some(level.as_str()) == wire_effort));
             if !is_valid_level {
                 return Err(AgentError::bad_request(format!(
                     "Value '{value}' is not selectable for config option '{option_id}'"
                 )));
             }
 
-            engine.apply_config_update(None, None, None, None, Some(value.to_owned()), None);
+            let engine_effort = wire_effort.unwrap_or_default().to_owned();
+            engine.apply_config_update(None, None, None, None, Some(engine_effort), None);
             *self
                 .reasoning_effort
                 .write()
@@ -742,12 +769,25 @@ fn aionrs_effort_config_option(engine: &AgentEngine, current_value: Option<Strin
         category: Some("thought_level".to_owned()),
         option_type: "select".to_owned(),
         current_value,
-        options: compat
-            .effort_levels()
-            .iter()
-            .map(|value| aionrs_effort_select_option(value))
+        options: std::iter::once("none")
+            .chain(compat.effort_levels().iter().map(|value| {
+                if value == "none" {
+                    "provider_none"
+                } else {
+                    value.as_str()
+                }
+            }))
+            .map(aionrs_effort_select_option)
             .collect(),
     })
+}
+
+fn aionrs_wire_effort(value: &str) -> Option<&str> {
+    match value {
+        "none" => None,
+        "provider_none" => Some("none"),
+        value => Some(value),
+    }
 }
 
 fn aionrs_effort_select_option(value: &str) -> AcpConfigSelectOptionDto {

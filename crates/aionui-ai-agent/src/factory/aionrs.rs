@@ -7,8 +7,8 @@ use aion_config::compat::OpenAiApiMode;
 use aion_config::config::{McpServerConfig, TransportType};
 use aion_types::message::ImageInputCapability;
 use aionui_api_types::{
-    AionrsBuildExtra, ForkSpec, ModelImageInputCapability, ModelOpenAiApiMode, ModelSettings, SessionMcpServer,
-    SessionMcpTransport, TEAM_MCP_SERVER_NAME, TeamMcpStdioConfig,
+    AionrsBuildExtra, ForkSpec, ModelImageInputCapability, ModelOpenAiApiMode, ModelReasoningEffort, ModelSettings,
+    SessionMcpServer, SessionMcpTransport, TEAM_MCP_SERVER_NAME, TeamMcpStdioConfig,
 };
 use aionui_common::ProviderWithModel;
 use aionui_db::IMcpServerRepository;
@@ -170,6 +170,7 @@ pub(super) async fn build(
         model_overrides.openai_api_mode,
     );
     compat_overrides.image_input = model_overrides.image_input;
+    compat_overrides.reasoning = model_overrides.reasoning_capability;
 
     if provider == "openai" {
         info!(
@@ -213,7 +214,7 @@ pub(super) async fn build(
         compat_overrides,
         session_directory,
         session_mode: overrides.session_mode,
-        thought_level: overrides.thought_level,
+        thought_level: resolve_thought_level(overrides.thought_level.as_deref(), model_overrides.reasoning_effort),
         skills: resolved_skills,
         extra_mcp_servers,
         bedrock_config,
@@ -505,11 +506,36 @@ fn rewrite_openai_api_url(url: &str, mode: OpenAiApiMode) -> Option<String> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ModelCompatOverrides {
     pub(crate) image_input: Option<ImageInputCapability>,
     pub(crate) openai_api_mode: Option<OpenAiApiMode>,
     pub(crate) context_limit: Option<u64>,
+    pub(crate) reasoning_effort: Option<ModelReasoningEffort>,
+    pub(crate) reasoning_capability: Option<aionui_common::model_reasoning::ModelReasoningCapability>,
+}
+
+/// An explicit automatic session choice suppresses the configured model default.
+pub(crate) fn resolve_thought_level(
+    session_effort: Option<&str>,
+    model_effort: Option<ModelReasoningEffort>,
+) -> Option<String> {
+    match session_effort.map(str::trim).filter(|effort| !effort.is_empty()) {
+        Some("auto") => None,
+        Some(effort) => Some(effort.to_owned()),
+        None => model_effort.map(|effort| {
+            match effort {
+                ModelReasoningEffort::None => "none",
+                ModelReasoningEffort::ProviderNone => "provider_none",
+                ModelReasoningEffort::Minimal => "minimal",
+                ModelReasoningEffort::Low => "low",
+                ModelReasoningEffort::Medium => "medium",
+                ModelReasoningEffort::High => "high",
+                ModelReasoningEffort::Xhigh => "xhigh",
+            }
+            .to_owned()
+        }),
+    }
 }
 
 /// Pick the context window for a model: its own setting first, then the
@@ -543,6 +569,8 @@ pub(crate) fn resolve_model_compat_overrides(
             ModelOpenAiApiMode::Responses => OpenAiApiMode::Responses,
         }),
         context_limit: settings.context_limit,
+        reasoning_effort: settings.reasoning_effort,
+        reasoning_capability: settings.reasoning_capability.clone(),
     })
 }
 

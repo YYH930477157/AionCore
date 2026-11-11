@@ -218,6 +218,77 @@ async fn fetch_models_openai_compatible_reports_gateway_context_limits() {
 }
 
 #[tokio::test]
+async fn fetch_models_reports_reasoning_capabilities_and_caches_provider_metadata() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [
+                {"id": "gpt-5.2", "reasoning": {"supported_efforts": ["low", "high"]}},
+                {"id": "legacy", "supported_parameters": ["temperature"]},
+                {"id": "opaque"},
+                {"id": "gpt-5"}
+            ]
+        })))
+        .mount(&mock_server)
+        .await;
+    let (router, db) = setup().await;
+    let id = create_provider(&db, "openai", &mock_server.uri(), "test-api-key").await;
+    let resp = router
+        .oneshot(post_request(&format!("/api/providers/{id}/models"), json!({})))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(
+        json["data"]["reasoning_capabilities"]["gpt-5.2"]["efforts"],
+        json!(["low", "high"])
+    );
+    assert_eq!(json["data"]["reasoning_capabilities"]["legacy"]["supported"], false);
+    assert_eq!(
+        json["data"]["reasoning_capabilities"]["gpt-5"]["efforts"],
+        json!(["minimal", "low", "medium", "high"])
+    );
+    assert!(json["data"]["reasoning_capabilities"]["opaque"]["supported"].is_null());
+    let repo = SqliteProviderRepository::new(db.pool().clone());
+    let row = repo.find_by_id(TEST_USER_ID, &id).await.unwrap().unwrap();
+    let cached: serde_json::Value = serde_json::from_str(&row.model_settings).unwrap();
+    assert_eq!(
+        cached["gpt-5.2"]["reasoning_capability"]["efforts"],
+        json!(["low", "high"])
+    );
+    assert_eq!(cached["legacy"]["reasoning_capability"]["supported"], false);
+    assert!(
+        cached.get("gpt-5").is_none(),
+        "local catalog must not become provider metadata"
+    );
+    mock_server.reset().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&mock_server)
+        .await;
+    assert!(
+        build_state(&db)
+            .model_fetch_service
+            .fetch_models(
+                TEST_USER_ID,
+                &id,
+                &serde_json::from_value(json!({"try_fix": false})).unwrap()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        repo.find_by_id(TEST_USER_ID, &id)
+            .await
+            .unwrap()
+            .unwrap()
+            .model_settings,
+        row.model_settings
+    );
+}
+
+#[tokio::test]
 async fn fetch_models_persisted_multi_key_uses_first_key_in_authorization_header() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))

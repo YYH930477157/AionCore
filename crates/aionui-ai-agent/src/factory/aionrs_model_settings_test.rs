@@ -1,9 +1,13 @@
 use aion_config::compat::OpenAiApiMode;
 use aion_types::message::ImageInputCapability;
+use aionui_api_types::ModelReasoningEffort;
 
 use crate::capability::image_input::resolve_image_input_capability;
 
-use super::{resolve_aionrs_url_and_compat_with_mode, resolve_context_window, resolve_model_compat_overrides};
+use super::{
+    resolve_aionrs_url_and_compat_with_mode, resolve_context_window, resolve_model_compat_overrides,
+    resolve_thought_level,
+};
 
 #[test]
 fn model_settings_resolve_explicit_vision_and_api_overrides() {
@@ -31,6 +35,63 @@ fn missing_model_settings_keep_vision_and_api_automatic() {
     assert_eq!(overrides.image_input, None);
     assert_eq!(overrides.openai_api_mode, None);
     assert_eq!(overrides.context_limit, None);
+    assert_eq!(overrides.reasoning_effort, None);
+}
+
+#[test]
+fn model_reasoning_effort_defaults_resolve_for_each_level() {
+    for (level, expected) in [
+        ("low", ModelReasoningEffort::Low),
+        ("medium", ModelReasoningEffort::Medium),
+        ("high", ModelReasoningEffort::High),
+    ] {
+        let raw = serde_json::json!({"model": {"reasoning_effort": level}}).to_string();
+        let settings = resolve_model_compat_overrides("model", &raw).unwrap();
+        assert_eq!(settings.reasoning_effort, Some(expected));
+        assert_eq!(
+            resolve_thought_level(None, settings.reasoning_effort).as_deref(),
+            Some(level)
+        );
+    }
+}
+
+#[test]
+fn session_reasoning_effort_overrides_the_model_default() {
+    assert_eq!(
+        resolve_thought_level(Some(" low "), Some(ModelReasoningEffort::High)).as_deref(),
+        Some("low")
+    );
+    assert_eq!(
+        resolve_thought_level(Some("auto"), Some(ModelReasoningEffort::High)),
+        None
+    );
+    assert_eq!(
+        resolve_thought_level(Some(" auto "), Some(ModelReasoningEffort::High)),
+        None
+    );
+}
+
+#[test]
+fn explicit_none_model_default_is_not_dropped_or_replaced_by_high() {
+    let settings = resolve_model_compat_overrides("model", r#"{"model":{"reasoning_effort":"none"}}"#).unwrap();
+    assert_eq!(
+        resolve_thought_level(None, settings.reasoning_effort).as_deref(),
+        Some("none")
+    );
+    assert_eq!(
+        resolve_thought_level(Some("none"), Some(ModelReasoningEffort::High)).as_deref(),
+        Some("none")
+    );
+}
+
+#[test]
+fn missing_or_blank_session_reasoning_effort_uses_the_model_default() {
+    assert_eq!(resolve_thought_level(None, None), None);
+    assert_eq!(resolve_thought_level(Some(""), None), None);
+    assert_eq!(
+        resolve_thought_level(Some("  "), Some(ModelReasoningEffort::Medium)).as_deref(),
+        Some("medium")
+    );
 }
 
 #[test]
@@ -77,6 +138,16 @@ fn invalid_model_settings_are_rejected() {
     let result = resolve_model_compat_overrides("gpt-5.6-sol", "not-json");
 
     assert!(result.is_err());
+}
+
+#[test]
+fn invalid_model_reasoning_effort_is_rejected() {
+    let error = resolve_model_compat_overrides("model", r#"{"model":{"reasoning_effort":"extreme"}}"#)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("Invalid model settings config"), "{error}");
+    assert!(error.contains("unknown variant `extreme`"), "{error}");
 }
 
 #[test]

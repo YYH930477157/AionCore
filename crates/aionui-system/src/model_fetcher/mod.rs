@@ -3,9 +3,11 @@ mod url_fixer;
 
 use std::sync::Arc;
 
-use aionui_api_types::{BedrockConfig, FetchModelsAnonymousRequest, FetchModelsRequest, FetchModelsResponse};
+use aionui_api_types::{
+    BedrockConfig, FetchModelsAnonymousRequest, FetchModelsRequest, FetchModelsResponse, ModelInfo, ModelSettings,
+};
 use aionui_common::decrypt_string;
-use aionui_db::IProviderRepository;
+use aionui_db::{IProviderRepository, UpdateProviderParams};
 
 use crate::error::SystemError;
 use crate::provider::deserialize_opt;
@@ -54,7 +56,38 @@ impl ModelFetchService {
         req: &FetchModelsRequest,
     ) -> Result<FetchModelsResponse, SystemError> {
         let config = self.load_provider_config(user_id, provider_id).await?;
-        self.fetch_with_config(&config, req.try_fix).await
+        let response = self.fetch_with_config(&config, req.try_fix).await?;
+        // Re-read after IO so concurrent edits to model preferences are preserved.
+        if let Some(row) = self.repo.find_by_id(user_id, provider_id).await?
+            && row.platform == config.platform
+            && row.base_url == config.base_url
+            && extract_first_key(&decrypt_string(&row.api_key_encrypted, &self.encryption_key)?) == config.api_key
+        {
+            let mut settings: std::collections::HashMap<String, ModelSettings> =
+                serde_json::from_str(&row.model_settings)
+                    .map_err(|e| SystemError::Internal(format!("Failed to parse model settings: {e}")))?;
+            for model in &response.models {
+                let id = match model {
+                    ModelInfo::Id(id) | ModelInfo::Named { id, .. } => id,
+                };
+                let reported = response.reported_reasoning_capabilities.get(id).cloned();
+                if reported.is_some() || settings.contains_key(id) {
+                    settings.entry(id.clone()).or_default().reasoning_capability = reported;
+                }
+            }
+            let json = serde_json::to_string(&settings).map_err(|e| SystemError::Internal(e.to_string()))?;
+            self.repo
+                .update(
+                    user_id,
+                    provider_id,
+                    UpdateProviderParams {
+                        model_settings: Some(&json),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+        }
+        Ok(response)
     }
 
     /// Fetch models using credentials supplied in the request, without a
@@ -78,11 +111,7 @@ impl ModelFetchService {
     /// entry points.
     async fn fetch_with_config(&self, config: &FetchConfig, try_fix: bool) -> Result<FetchModelsResponse, SystemError> {
         match fetchers::fetch_for_platform(&self.http_client, config).await {
-            Ok(fetched) => Ok(FetchModelsResponse {
-                models: fetched.models,
-                fixed_base_url: None,
-                context_limits: fetched.context_limits,
-            }),
+            Ok(fetched) => Ok(fetched.into_response(None)),
             Err(err) if try_fix && supports_url_fix(&config.platform) => {
                 url_fixer::try_fix_url(&self.http_client, config).await.map_err(|_| err)
             }

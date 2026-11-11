@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use aionui_common::ProtocolType;
+pub use aionui_common::model_reasoning::ModelReasoningCapability;
 
 /// Model capability type discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -45,6 +46,21 @@ pub enum ModelImageInputCapability {
     Unsupported,
 }
 
+/// Default reasoning effort configured for one model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelReasoningEffort {
+    /// Omit the reasoning effort parameter from outgoing model requests.
+    None,
+    #[serde(rename = "provider_none")]
+    ProviderNone,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+}
+
 /// User-configured overrides for one model.
 ///
 /// Missing values retain automatic capability and protocol resolution.
@@ -57,6 +73,11 @@ pub struct ModelSettings {
     /// Context window in tokens. Overrides the provider-wide `context_limit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_limit: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ModelReasoningEffort>,
+    /// Cached provider discovery; separate from the user's effort preference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_capability: Option<ModelReasoningCapability>,
 }
 
 /// Health status values for a model.
@@ -171,6 +192,9 @@ pub struct ProviderResponse {
     pub model_health: Option<HashMap<String, ModelHealthStatus>>,
     /// Per-model explicit overrides. An absent entry uses automatic resolution.
     pub model_settings: HashMap<String, ModelSettings>,
+    /// Resolved provider metadata or conservative model-specific fallback.
+    #[serde(default)]
+    pub reasoning_capabilities: HashMap<String, ModelReasoningCapability>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bedrock_config: Option<BedrockConfig>,
     #[serde(default)]
@@ -235,6 +259,8 @@ pub struct UpdateProviderRequest {
     pub model_enabled: Option<HashMap<String, bool>>,
     pub model_health: Option<HashMap<String, ModelHealthStatus>>,
     pub model_settings: Option<HashMap<String, ModelSettings>>,
+    /// Fresh discovery from the credentials in this request; applied after invalidating old caches.
+    pub reported_reasoning_capabilities: Option<HashMap<String, ModelReasoningCapability>>,
     pub bedrock_config: Option<BedrockConfig>,
     pub is_full_url: Option<bool>,
 }
@@ -281,6 +307,10 @@ pub struct FetchModelsResponse {
     /// Context windows the remote API reported, keyed by model id.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub context_limits: HashMap<String, u64>,
+    #[serde(default)]
+    pub reasoning_capabilities: HashMap<String, ModelReasoningCapability>,
+    #[serde(default)]
+    pub reported_reasoning_capabilities: HashMap<String, ModelReasoningCapability>,
 }
 
 /// Request body for `POST /api/providers/detect-protocol`.
@@ -509,6 +539,7 @@ mod tests {
             model_enabled: Some(HashMap::from([("claude-sonnet-4-20250514".into(), true)])),
             model_health: None,
             model_settings: HashMap::new(),
+            reasoning_capabilities: HashMap::new(),
             bedrock_config: None,
             is_full_url: false,
             created_at: 1712345678000,
@@ -543,6 +574,7 @@ mod tests {
             model_enabled: None,
             model_health: None,
             model_settings: HashMap::new(),
+            reasoning_capabilities: HashMap::new(),
             bedrock_config: None,
             is_full_url: false,
             created_at: 0,
@@ -791,6 +823,8 @@ mod tests {
             ],
             fixed_base_url: None,
             context_limits: HashMap::new(),
+            reasoning_capabilities: HashMap::new(),
+            reported_reasoning_capabilities: HashMap::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["models"].as_array().unwrap().len(), 2);
@@ -804,6 +838,8 @@ mod tests {
             models: vec![ModelInfo::Id("gpt-4".into())],
             fixed_base_url: Some("https://api.openai.com/v1".into()),
             context_limits: HashMap::new(),
+            reasoning_capabilities: HashMap::new(),
+            reported_reasoning_capabilities: HashMap::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["fixed_base_url"], "https://api.openai.com/v1");
@@ -815,9 +851,46 @@ mod tests {
             models: vec![ModelInfo::Id("qwen3-32b".into())],
             fixed_base_url: None,
             context_limits: HashMap::from([("qwen3-32b".to_owned(), 32_768)]),
+            reasoning_capabilities: HashMap::new(),
+            reported_reasoning_capabilities: HashMap::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["context_limits"]["qwen3-32b"], 32_768);
+    }
+
+    #[test]
+    fn test_model_settings_reasoning_effort_round_trip() {
+        for effort in ["none", "provider_none", "minimal", "low", "medium", "high", "xhigh"] {
+            let raw = json!({"reasoning_effort": effort});
+            let settings: ModelSettings = serde_json::from_value(raw.clone()).unwrap();
+            assert_eq!(serde_json::to_value(settings).unwrap(), raw);
+        }
+        let automatic: ModelSettings = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(serde_json::to_value(automatic).unwrap(), json!({}));
+    }
+
+    #[test]
+    fn test_provider_requests_reject_invalid_model_reasoning_effort() {
+        for effort in [json!("auto"), json!("extreme"), json!(4)] {
+            let settings = json!({"model": {"reasoning_effort": effort}});
+            let create = json!({
+                "platform": "openai", "name": "OpenAI",
+                "base_url": "https://api.example.com", "api_key": "test",
+                "model_settings": settings
+            });
+            let create_error = serde_json::from_value::<CreateProviderRequest>(create)
+                .unwrap_err()
+                .to_string();
+            let update_error = serde_json::from_value::<UpdateProviderRequest>(json!({"model_settings": settings}))
+                .unwrap_err()
+                .to_string();
+            for error in [create_error, update_error] {
+                assert!(
+                    error.contains("unknown variant") || error.contains("invalid type"),
+                    "{error}"
+                );
+            }
+        }
     }
 
     #[test]

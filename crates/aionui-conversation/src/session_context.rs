@@ -44,7 +44,7 @@ impl<'a> SessionContextBuilder<'a> {
     pub(crate) async fn build_options(
         &self,
         row: &ConversationRow,
-        seed: Option<AionrsRuntimePermissionSeed>,
+        seed: Option<AionrsRuntimeSeed>,
     ) -> Result<BuildTaskOptions, ConversationError> {
         Ok(BuildTaskOptions::new(
             self.build_with_workspace_override(row, None, seed).await?,
@@ -55,7 +55,7 @@ impl<'a> SessionContextBuilder<'a> {
         &self,
         row: &ConversationRow,
         workspace_override: Option<&str>,
-        seed: Option<AionrsRuntimePermissionSeed>,
+        seed: Option<AionrsRuntimeSeed>,
     ) -> Result<BuildTaskOptions, ConversationError> {
         Ok(BuildTaskOptions::new(
             self.build_with_workspace_override(row, workspace_override, seed)
@@ -64,7 +64,7 @@ impl<'a> SessionContextBuilder<'a> {
     }
 
     /// Test-only convenience wrapper. Production entry points thread a real
-    /// permission seed via `build_options*`; tests exercise the default
+    /// runtime seed via `build_options*`; tests exercise the default
     /// (no-seed) path.
     #[cfg(test)]
     async fn build(&self, row: &ConversationRow) -> Result<AgentSessionContext, ConversationError> {
@@ -75,7 +75,7 @@ impl<'a> SessionContextBuilder<'a> {
         &self,
         row: &ConversationRow,
         workspace_override: Option<&str>,
-        seed: Option<AionrsRuntimePermissionSeed>,
+        seed: Option<AionrsRuntimeSeed>,
     ) -> Result<AgentSessionContext, ConversationError> {
         let agent_type: AgentType = string_to_enum(&row.r#type)?;
         reject_deprecated_runtime_kind(row, &agent_type)?;
@@ -192,7 +192,7 @@ impl<'a> SessionContextBuilder<'a> {
         agent_type: &AgentType,
         extra: serde_json::Value,
         team: Option<TeamSessionBinding>,
-        seed: Option<AionrsRuntimePermissionSeed>,
+        seed: Option<AionrsRuntimeSeed>,
     ) -> Result<AgentSessionKind, ConversationError> {
         match agent_type {
             AgentType::Acp => self
@@ -426,9 +426,9 @@ impl<'a> SessionContextBuilder<'a> {
     }
 }
 
-/// Runtime permission gate inputs for an aionrs rebuild, loaded from the
+/// Runtime selections for an aionrs rebuild, loaded from the
 /// conversation's persisted assistant snapshot in the service layer
-/// (`ConversationService::load_aionrs_permission_seed`) and threaded down so
+/// (`ConversationService::load_aionrs_runtime_seed`) and threaded down so
 /// `SessionContextBuilder` needs no `conversation_repo` handle.
 ///
 /// - `default_permission_mode`: the assistant's permission mode (`auto` /
@@ -436,17 +436,20 @@ impl<'a> SessionContextBuilder<'a> {
 /// - `resolved_permission_value`: the last runtime-selected permission
 ///   persisted on the snapshot; only honored under `auto` for non-team
 ///   sessions.
+/// - `resolved_thought_level_value`: this conversation's runtime selection,
+///   independent of the assistant's defaults for new conversations.
 #[derive(Debug, Clone)]
-pub(crate) struct AionrsRuntimePermissionSeed {
+pub(crate) struct AionrsRuntimeSeed {
     pub default_permission_mode: String,
     pub resolved_permission_value: Option<String>,
+    pub resolved_thought_level_value: Option<String>,
 }
 
 fn build_aionrs_context(
     row: &ConversationRow,
     extra: serde_json::Value,
     team: Option<TeamSessionBinding>,
-    permission_seed: Option<AionrsRuntimePermissionSeed>,
+    runtime_seed: Option<AionrsRuntimeSeed>,
 ) -> AionrsSessionBuildContext {
     let mut config: AionrsBuildExtra = match serde_json::from_value(extra.clone()) {
         Ok(config) => config,
@@ -463,10 +466,19 @@ fn build_aionrs_context(
     apply_team_seed_to_aionrs_config(&team, &mut config);
     let belongs_to_team = team.is_some();
     // Team-bound sessions keep the team seed / create-time value; runtime
-    // resolved permission is intentionally NOT read back (centralized team
-    // governance — same safety principle as `fixed`). Only non-team sessions
-    // consult the persisted runtime permission.
-    if !belongs_to_team && let Some(seed) = permission_seed {
+    // selections are intentionally NOT read back (centralized team governance).
+    // Only non-team sessions consult the persisted runtime selections.
+    if !belongs_to_team && let Some(seed) = runtime_seed {
+        // Fixed thought-level defaults govern new conversations, not a user's
+        // explicit choice within this conversation. Permission retains its
+        // separate anti-escalation gate below.
+        if let Some(resolved) = seed
+            .resolved_thought_level_value
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            config.thought_level = Some(resolved.clone());
+        }
         apply_runtime_permission_seed(seed, row, &mut config);
     }
     AionrsSessionBuildContext {
@@ -479,11 +491,7 @@ fn build_aionrs_context(
 /// Applies the persisted runtime permission to the rebuild seed, honoring
 /// `default_permission_mode` semantics (spec §7.1/§7.2). Callers must ensure
 /// team-bound sessions never reach here.
-fn apply_runtime_permission_seed(
-    seed: AionrsRuntimePermissionSeed,
-    row: &ConversationRow,
-    config: &mut AionrsBuildExtra,
-) {
+fn apply_runtime_permission_seed(seed: AionrsRuntimeSeed, row: &ConversationRow, config: &mut AionrsBuildExtra) {
     // `fixed` (and any unknown mode): keep the create-time seed
     // (== create-time default_permission_value); never adopt the runtime
     // residue — anti-privilege-escalation gate.
@@ -1439,10 +1447,11 @@ mod tests {
         }
     }
 
-    fn aionrs_seed(mode: &str, resolved: Option<&str>) -> AionrsRuntimePermissionSeed {
-        AionrsRuntimePermissionSeed {
+    fn aionrs_seed(mode: &str, resolved: Option<&str>) -> AionrsRuntimeSeed {
+        AionrsRuntimeSeed {
             default_permission_mode: mode.to_owned(),
             resolved_permission_value: resolved.map(ToOwned::to_owned),
+            resolved_thought_level_value: None,
         }
     }
 

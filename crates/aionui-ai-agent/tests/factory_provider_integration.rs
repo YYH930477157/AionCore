@@ -40,6 +40,15 @@ async fn setup() -> (
 }
 
 async fn insert_test_provider(repo: &dyn IProviderRepository, id: &str, platform: &str) {
+    insert_test_provider_with_settings(repo, id, platform, "{}").await;
+}
+
+async fn insert_test_provider_with_settings(
+    repo: &dyn IProviderRepository,
+    id: &str,
+    platform: &str,
+    model_settings: &str,
+) {
     let key = test_encryption_key();
     let encrypted_api_key = encrypt_string("sk-test-key-12345", &key).unwrap();
     repo.create(CreateProviderParams {
@@ -56,7 +65,7 @@ async fn insert_test_provider(repo: &dyn IProviderRepository, id: &str, platform
         model_protocols: None,
         model_enabled: None,
         model_health: None,
-        model_settings: "{}",
+        model_settings,
         bedrock_config: None,
         is_full_url: false,
     })
@@ -198,4 +207,49 @@ async fn aionrs_factory_respects_use_model_override() {
 
     let result = factory(options).await;
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn aionrs_factory_resolves_model_reasoning_effort_and_session_precedence() {
+    let (provider_repo, agent_registry, acp_agent_service) = setup().await;
+    insert_test_provider_with_settings(
+        &*provider_repo,
+        "prov-effort",
+        "openai",
+        r#"{"gpt-5.4":{"reasoning_effort":"high"},"legacy-model":{"reasoning_effort":"none"}}"#,
+    )
+    .await;
+    let factory = make_factory(provider_repo, agent_registry, acp_agent_service);
+    let workspace = tempfile::tempdir().unwrap();
+
+    for (selected_model, session_effort, expected) in [
+        ("gpt-5.4", None, Some("high")),
+        ("gpt-5.4", Some("low"), Some("low")),
+        ("gpt-5.4", Some("auto"), Some("none")),
+        ("gpt-5.4", Some("none"), Some("none")),
+        ("gpt-5.4", Some("  "), Some("high")),
+        ("legacy-model", None, Some("none")),
+    ] {
+        let options = make_aionrs_options(
+            &format!("conv-effort-{}", uuid::Uuid::now_v7()),
+            workspace.path().to_str().unwrap(),
+            ProviderWithModel {
+                provider_id: "prov-effort".into(),
+                model: "gpt-4o".into(),
+                use_model: Some(selected_model.into()),
+            },
+            AionrsBuildExtra {
+                thought_level: session_effort.map(str::to_owned),
+                ..Default::default()
+            },
+        );
+        let instance = factory(options).await.unwrap();
+        let config = instance.get_config_options().await.unwrap();
+        let effort = config
+            .config_options
+            .iter()
+            .find(|option| option.id == "reasoning_effort")
+            .expect("GPT-5.4 must expose reasoning effort");
+        assert_eq!(effort.current_value.as_deref(), expected, "{session_effort:?}");
+    }
 }

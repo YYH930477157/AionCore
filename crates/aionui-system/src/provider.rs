@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aionui_api_types::{CreateProviderRequest, ProviderResponse, UpdateProviderRequest};
+use aionui_api_types::{CreateProviderRequest, ModelSettings, ProviderResponse, UpdateProviderRequest};
+use aionui_common::model_reasoning::resolve_model_reasoning;
 use aionui_common::{decrypt_string, encrypt_string};
 use aionui_db::{CreateProviderParams, IProviderRepository, UpdateProviderParams, models::Provider};
 use serde::de::DeserializeOwned;
@@ -73,9 +74,41 @@ impl ProviderService {
         &self,
         user_id: &str,
         id: &str,
-        req: UpdateProviderRequest,
+        mut req: UpdateProviderRequest,
     ) -> Result<ProviderResponse, SystemError> {
         validate_update_request(&req)?;
+        let existing = self
+            .repo
+            .find_by_id(user_id, id)
+            .await?
+            .ok_or_else(|| SystemError::NotFound(format!("Provider {id} not found")))?;
+        let source_changed = req.base_url.as_ref().is_some_and(|v| v != &existing.base_url)
+            || req.platform.as_ref().is_some_and(|v| v != &existing.platform)
+            || req.is_full_url.is_some_and(|v| v != existing.is_full_url)
+            || req.api_key.as_ref().is_some_and(|v| {
+                decrypt_string(&existing.api_key_encrypted, &self.encryption_key)
+                    .as_ref()
+                    .ok()
+                    != Some(v)
+            });
+        if source_changed {
+            let settings = req.model_settings.get_or_insert(
+                serde_json::from_str(&existing.model_settings)
+                    .map_err(|e| SystemError::Internal(format!("Failed to parse model_settings: {e}")))?,
+            );
+            for setting in settings.values_mut() {
+                setting.reasoning_capability = None;
+            }
+        }
+        if let Some(reported) = &req.reported_reasoning_capabilities {
+            let settings = req.model_settings.get_or_insert(
+                serde_json::from_str(&existing.model_settings)
+                    .map_err(|e| SystemError::Internal(format!("Failed to parse model_settings: {e}")))?,
+            );
+            for (model, capability) in reported {
+                settings.entry(model.clone()).or_default().reasoning_capability = Some(capability.clone());
+            }
+        }
 
         let encrypted_key = req
             .api_key
@@ -155,8 +188,20 @@ impl ProviderService {
             deserialize_opt(&row.model_protocols, "model_protocols")?;
         let model_enabled: Option<HashMap<String, bool>> = deserialize_opt(&row.model_enabled, "model_enabled")?;
         let model_health = deserialize_opt(&row.model_health, "model_health")?;
-        let model_settings = serde_json::from_str(&row.model_settings)
+        let model_settings: HashMap<String, ModelSettings> = serde_json::from_str(&row.model_settings)
             .map_err(|e| SystemError::Internal(format!("Failed to parse model_settings JSON: {e}")))?;
+        let reasoning_capabilities = models
+            .iter()
+            .map(|model| {
+                (
+                    model.clone(),
+                    resolve_model_reasoning(
+                        model,
+                        model_settings.get(model).and_then(|s| s.reasoning_capability.as_ref()),
+                    ),
+                )
+            })
+            .collect();
         let bedrock_config = deserialize_opt(&row.bedrock_config, "bedrock_config")?;
 
         Ok(ProviderResponse {
@@ -173,6 +218,7 @@ impl ProviderService {
             model_enabled,
             model_health,
             model_settings,
+            reasoning_capabilities,
             bedrock_config,
             is_full_url: row.is_full_url,
             created_at: row.created_at,
@@ -629,6 +675,65 @@ mod tests {
         };
         let err = svc.create(TEST_USER_ID, req).await.unwrap_err();
         assert!(matches!(err, SystemError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn endpoint_change_clears_discovered_capability_but_keeps_user_preference() {
+        let svc = setup().await;
+        let mut req = sample_create_request();
+        req.model_settings = serde_json::from_value(serde_json::json!({
+            "model": { "reasoning_effort": "high", "reasoning_capability": {
+                "supported": true, "efforts": ["high"]
+            }}
+        }))
+        .unwrap();
+        let created = svc.create(TEST_USER_ID, req).await.unwrap();
+        let updated = svc
+            .update(
+                TEST_USER_ID,
+                &created.id,
+                UpdateProviderRequest {
+                    base_url: Some("https://different.example/v1".into()),
+                    model_settings: Some(created.model_settings),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.model_settings["model"].reasoning_capability, None);
+        assert_eq!(
+            updated.model_settings["model"].reasoning_effort,
+            Some(aionui_api_types::ModelReasoningEffort::High)
+        );
+        let fresh = svc
+            .update(
+                TEST_USER_ID,
+                &created.id,
+                UpdateProviderRequest {
+                    base_url: Some("https://fresh.example/v1".into()),
+                    reported_reasoning_capabilities: Some(
+                        serde_json::from_value(serde_json::json!({
+                            "model": {"supported": false}
+                        }))
+                        .unwrap(),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            fresh.model_settings["model"]
+                .reasoning_capability
+                .as_ref()
+                .unwrap()
+                .supported,
+            Some(false)
+        );
+        assert_eq!(
+            fresh.model_settings["model"].reasoning_effort,
+            Some(aionui_api_types::ModelReasoningEffort::High)
+        );
     }
 
     #[tokio::test]

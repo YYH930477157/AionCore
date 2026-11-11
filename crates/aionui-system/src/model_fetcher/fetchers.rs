@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use aionui_api_types::ModelInfo;
+use aionui_api_types::{FetchModelsResponse, ModelInfo, ModelReasoningCapability};
+use aionui_common::model_reasoning::{reported_model_reasoning, resolve_model_reasoning};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use tracing::warn;
@@ -20,6 +21,7 @@ const MIN_CONTEXT_LIMIT: u64 = 1_024;
 pub(crate) struct FetchedModels {
     pub models: Vec<ModelInfo>,
     pub context_limits: HashMap<String, u64>,
+    pub reasoning_capabilities: HashMap<String, ModelReasoningCapability>,
 }
 
 impl From<Vec<ModelInfo>> for FetchedModels {
@@ -27,6 +29,32 @@ impl From<Vec<ModelInfo>> for FetchedModels {
         Self {
             models,
             context_limits: HashMap::new(),
+            reasoning_capabilities: HashMap::new(),
+        }
+    }
+}
+
+impl FetchedModels {
+    pub(super) fn into_response(self, fixed_base_url: Option<String>) -> FetchModelsResponse {
+        let reasoning_capabilities = self
+            .models
+            .iter()
+            .map(|model| {
+                let id = match model {
+                    ModelInfo::Id(id) | ModelInfo::Named { id, .. } => id,
+                };
+                (
+                    id.clone(),
+                    resolve_model_reasoning(id, self.reasoning_capabilities.get(id)),
+                )
+            })
+            .collect();
+        FetchModelsResponse {
+            models: self.models,
+            context_limits: self.context_limits,
+            fixed_base_url,
+            reasoning_capabilities,
+            reported_reasoning_capabilities: self.reasoning_capabilities,
         }
     }
 }
@@ -124,6 +152,9 @@ pub(super) async fn fetch_openai_compatible(
 
     let mut fetched = FetchedModels::default();
     for model in body.data {
+        if let Some(capability) = reported_model_reasoning(&model.extra) {
+            fetched.reasoning_capabilities.insert(model.id.clone(), capability);
+        }
         if let Some(limit) = reported_context_limit(&model.extra) {
             fetched.context_limits.insert(model.id.clone(), limit);
         }

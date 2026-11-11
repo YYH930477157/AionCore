@@ -48,11 +48,7 @@ pub(crate) async fn try_fix_url(
         if let Ok(Ok((fetched, fixed_url))) = result {
             set.abort_all();
             debug!(fixed_url = %fixed_url, "URL auto-fix succeeded");
-            return Ok(FetchModelsResponse {
-                models: fetched.models,
-                fixed_base_url: Some(fixed_url),
-                context_limits: fetched.context_limits,
-            });
+            return Ok(fetched.into_response(Some(fixed_url)));
         }
     }
 

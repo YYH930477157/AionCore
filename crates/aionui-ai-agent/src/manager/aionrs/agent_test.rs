@@ -238,8 +238,51 @@ async fn aionrs_exposes_provider_effort_levels_as_thought_level_option() {
             .iter()
             .map(|option| option.value.as_str())
             .collect::<Vec<_>>(),
-        vec!["low", "medium", "high"]
+        vec!["none", "minimal", "low", "medium", "high", "xhigh"]
     );
+}
+
+#[tokio::test]
+async fn aionrs_uses_discovered_effort_levels_and_distinguishes_provider_none() {
+    let mut config = make_effort_test_config();
+    config.compat_overrides.reasoning = Some(aionui_common::model_reasoning::ModelReasoningCapability {
+        supported: Some(true),
+        efforts: Some(vec!["none".into(), "high".into(), "xhigh".into()]),
+    });
+    let agent = AionrsAgentManager::new("discovered-effort".into(), "/project".into(), config, None)
+        .await
+        .unwrap();
+    let options = agent.config_options().await.unwrap().config_options;
+    let effort = options.iter().find(|option| option.id == "reasoning_effort").unwrap();
+    assert_eq!(
+        effort
+            .options
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        ["none", "provider_none", "high", "xhigh"]
+    );
+    assert!(agent.set_config_option("reasoning_effort", "low").await.is_err());
+    agent
+        .set_config_option("reasoning_effort", "provider_none")
+        .await
+        .unwrap();
+    agent.set_config_option("reasoning_effort", "xhigh").await.unwrap();
+}
+
+#[tokio::test]
+async fn aionrs_discovery_denial_blocks_remembered_effort() {
+    let mut config = make_effort_test_config();
+    config.thought_level = Some("high".into());
+    config.compat_overrides.reasoning = Some(aionui_common::model_reasoning::ModelReasoningCapability {
+        supported: Some(false),
+        efforts: None,
+    });
+    let agent = AionrsAgentManager::new("denied-effort".into(), "/project".into(), config, None)
+        .await
+        .unwrap();
+    assert!(!agent.engine.lock().await.compat().supports_effort());
+    assert!(agent.set_config_option("reasoning_effort", "high").await.is_err());
 }
 
 #[tokio::test]
@@ -262,6 +305,23 @@ async fn aionrs_runtime_effort_switch_is_observed() {
         .find(|option| option.id == "reasoning_effort")
         .expect("response should include the effort option");
     assert_eq!(effort.current_value.as_deref(), Some("high"));
+}
+
+#[tokio::test]
+async fn aionrs_none_clears_high_and_remains_selectable() {
+    let mut config = make_effort_test_config();
+    config.thought_level = Some("none".into());
+    let agent = AionrsAgentManager::new("conv-none-effort".into(), "/project".into(), config, None)
+        .await
+        .unwrap();
+    assert_eq!(agent.reasoning_effort.read().unwrap().as_deref(), Some("none"));
+    agent.set_config_option("reasoning_effort", "high").await.unwrap();
+    let cleared = agent.set_config_option("reasoning_effort", "none").await.unwrap();
+    let options = cleared.config_options.unwrap();
+    let effort = options.iter().find(|item| item.id == "reasoning_effort").unwrap();
+    assert_eq!(effort.current_value.as_deref(), Some("none"));
+    agent.set_config_option("reasoning_effort", "low").await.unwrap();
+    assert_eq!(agent.reasoning_effort.read().unwrap().as_deref(), Some("low"));
 }
 
 #[tokio::test]
@@ -316,7 +376,7 @@ async fn aionrs_ignores_invalid_initial_effort_seed() {
     .await
     .unwrap();
 
-    assert_eq!(agent.reasoning_effort.read().unwrap().as_deref(), None);
+    assert_eq!(agent.reasoning_effort.read().unwrap().as_deref(), Some("none"));
 }
 
 #[tokio::test]

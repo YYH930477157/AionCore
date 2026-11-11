@@ -125,6 +125,7 @@ impl RuntimeCapabilities {
 pub struct AionrsCompatOverrides {
     pub(crate) openai_api_mode: Option<OpenAiApiMode>,
     pub(crate) image_input: Option<ImageInputCapability>,
+    pub(crate) reasoning: Option<aionui_common::model_reasoning::ModelReasoningCapability>,
     pub max_tokens_field: Option<String>,
     pub api_path: Option<String>,
 }

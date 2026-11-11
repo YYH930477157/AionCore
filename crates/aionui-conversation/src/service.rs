@@ -61,7 +61,7 @@ use crate::convert::{
     row_to_message_response_compact, row_to_response, row_to_response_with_extra, search_row_to_item, string_to_enum,
 };
 use crate::error::ConversationError;
-use crate::session_context::{AionrsRuntimePermissionSeed, SessionContextBuilder};
+use crate::session_context::{AionrsRuntimeSeed, SessionContextBuilder};
 use crate::session_mentions;
 use crate::skill_resolver::SkillResolver;
 use crate::skill_snapshot::{backfill_skills_if_missing, compute_initial_skills};
@@ -1071,7 +1071,7 @@ impl ConversationService {
             .and_then(|assistant| assistant.conversation_overrides)
             .map(AssistantConversationOverrides::from)
             .unwrap_or_default();
-        let assistant_snapshot = match assistant_id.as_deref() {
+        let mut assistant_snapshot = match assistant_id.as_deref() {
             Some(id) => {
                 self.resolve_assistant_snapshot(user_id, id, assistant_locale.as_deref(), &assistant_overrides, &extra)
                     .await?
@@ -1080,6 +1080,25 @@ impl ConversationService {
         };
         let explicit_type = req.r#type;
         let effective_type = resolve_create_agent_type(explicit_type, assistant_snapshot.as_ref())?;
+        if effective_type == AgentType::Aionrs
+            && extra.get("teamId").is_none()
+            && assistant_overrides.thought_level.is_none()
+            && let Some(snapshot) = assistant_snapshot.as_mut()
+            && snapshot.default_modes.thought_level != "fixed"
+        {
+            snapshot.resolved_defaults.thought_level =
+                Some(match extra.get("thought_level").and_then(serde_json::Value::as_str) {
+                    Some(explicit) if !explicit.trim().is_empty() => explicit.to_owned(),
+                    _ => {
+                        self.model_default_thought_level(
+                            user_id,
+                            req.model.as_ref(),
+                            snapshot.resolved_defaults.thought_level.as_deref(),
+                        )
+                        .await?
+                    }
+                });
+        }
 
         if !effective_type.supports_new_conversation() {
             info!(
@@ -1654,6 +1673,49 @@ impl ConversationService {
             .await
             .map_err(|e| ConversationError::internal(format!("agent_metadata lookup failed: {e}")))?;
         Ok(resolve_agent_binding_from_rows(&rows, value))
+    }
+
+    async fn model_default_thought_level(
+        &self,
+        user_id: &str,
+        model: Option<&aionui_common::ProviderWithModel>,
+        remembered: Option<&str>,
+    ) -> Result<String, ConversationError> {
+        let Some(model) = model else {
+            return Ok("none".into());
+        };
+        let model_id = model.use_model.as_deref().unwrap_or(&model.model);
+        let settings = if let Some(repo) = self.provider_repo()
+            && let Some(provider) = repo.find_by_id(user_id, &model.provider_id).await?
+        {
+            serde_json::from_str::<HashMap<String, aionui_api_types::ModelSettings>>(&provider.model_settings)
+                .map_err(|e| ConversationError::internal(format!("Invalid model settings: {e}")))?
+                .remove(model_id)
+        } else {
+            None
+        };
+        let capability = aionui_common::model_reasoning::resolve_model_reasoning(
+            model_id,
+            settings.as_ref().and_then(|s| s.reasoning_capability.as_ref()),
+        );
+        if capability.supported == Some(false) {
+            return Ok("none".into());
+        }
+        let configured = settings
+            .and_then(|s| s.reasoning_effort)
+            .and_then(|effort| serde_json::to_value(effort).ok()?.as_str().map(str::to_owned));
+        let chosen = configured
+            .as_deref()
+            .or_else(|| (capability.supported == Some(true)).then_some(remembered).flatten())
+            .unwrap_or("none");
+        let wire = if chosen == "provider_none" { "none" } else { chosen };
+        Ok(
+            if chosen == "none" || capability.selectable_efforts().iter().any(|level| level == wire) {
+                chosen.to_owned()
+            } else {
+                "none".into()
+            },
+        )
     }
 
     pub(crate) async fn resolve_assistant_snapshot(
@@ -2351,7 +2413,7 @@ impl ConversationService {
 
         // Merge extra if provided. For aionrs, strip `extra.model` post-merge
         // so the row keeps a single canonical model source (top-level column).
-        let merged_extra = if let Some(new_extra) = &req.extra {
+        let mut merged_extra = if let Some(new_extra) = &req.extra {
             let mut existing_extra: serde_json::Value =
                 serde_json::from_str(&existing.extra).unwrap_or_else(|_| serde_json::json!({}));
             merge_json(&mut existing_extra, new_extra);
@@ -2377,9 +2439,36 @@ impl ConversationService {
         let pinned_at = req.pinned.map(|p| if p { Some(now) } else { None });
 
         let model_changed = req.model.as_ref().is_some_and(|new_model| {
-            let new_json = serde_json::to_string(new_model).unwrap_or_default();
-            existing.model.as_deref() != Some(new_json.as_str())
+            existing
+                .model
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<aionui_common::ProviderWithModel>(json).ok())
+                .as_ref()
+                != Some(new_model)
         });
+        let mut effective_extra: serde_json::Value =
+            serde_json::from_str(merged_extra.as_deref().unwrap_or(&existing.extra))
+                .unwrap_or_else(|_| serde_json::json!({}));
+        let reset_thought_level = if model_changed && effective_extra.get("teamId").is_none() {
+            let effort = match req
+                .extra
+                .as_ref()
+                .and_then(|extra| extra.get("thought_level"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|effort| !effort.trim().is_empty())
+            {
+                Some(explicit) => explicit.to_owned(),
+                None => {
+                    self.model_default_thought_level(user_id, req.model.as_ref(), None)
+                        .await?
+                }
+            };
+            effective_extra["thought_level"] = serde_json::json!(effort);
+            merged_extra = Some(effective_extra.to_string());
+            Some(effort)
+        } else {
+            None
+        };
 
         let model_json = req
             .model
@@ -2423,6 +2512,7 @@ impl ConversationService {
                 id,
                 AssistantRuntimePreferenceUpdate {
                     model: Some(selected_model),
+                    thought_level: reset_thought_level.as_deref(),
                     ..Default::default()
                 },
             )
@@ -2432,6 +2522,7 @@ impl ConversationService {
                 id,
                 AssistantRuntimePreferenceUpdate {
                     model: Some(selected_model),
+                    thought_level: reset_thought_level.as_deref(),
                     ..Default::default()
                 },
             )
@@ -4791,16 +4882,16 @@ pub(crate) fn agent_error_top_level_code(error: &AgentError) -> &'static str {
 }
 
 impl ConversationService {
-    /// Loads the persisted runtime permission gate inputs for an aionrs
+    /// Loads the persisted runtime selections for an aionrs
     /// rebuild. Returns `None` for non-aionrs conversations and for aionrs
     /// conversations without a persisted assistant snapshot (assistant-less
     /// sessions are out of scope — spec §5). This is the only place a
     /// `conversation_repo` handle is needed, so the seed is computed here and
     /// threaded into `SessionContextBuilder` (spec §7.3, A-2).
-    async fn load_aionrs_permission_seed(
+    async fn load_aionrs_runtime_seed(
         &self,
         row: &aionui_db::models::ConversationRow,
-    ) -> Result<Option<AionrsRuntimePermissionSeed>, ConversationError> {
+    ) -> Result<Option<AionrsRuntimeSeed>, ConversationError> {
         if row.r#type != AgentType::Aionrs.serde_name() {
             return Ok(None);
         }
@@ -4810,12 +4901,13 @@ impl ConversationService {
             .await
             .map_err(|e| {
                 ConversationError::internal(format!(
-                    "Failed to load assistant snapshot for aionrs permission seed: {e}"
+                    "Failed to load assistant snapshot for aionrs runtime seed: {e}"
                 ))
             })?;
-        Ok(snapshot.map(|snapshot| AionrsRuntimePermissionSeed {
+        Ok(snapshot.map(|snapshot| AionrsRuntimeSeed {
             default_permission_mode: snapshot.default_permission_mode,
             resolved_permission_value: snapshot.resolved_permission_value,
+            resolved_thought_level_value: snapshot.resolved_thought_level_value,
         }))
     }
 
@@ -4829,7 +4921,7 @@ impl ConversationService {
         row: &aionui_db::models::ConversationRow,
     ) -> Result<BuildTaskOptions, ConversationError> {
         reject_deprecated_runtime_row(row)?;
-        let seed = self.load_aionrs_permission_seed(row).await?;
+        let seed = self.load_aionrs_runtime_seed(row).await?;
         let workspace = self.managed_workspace_bootstrap(row).await?;
         let builder =
             SessionContextBuilder::new(&self.workspace_root, &self.agent_metadata_repo, &self.acp_session_repo);
@@ -4849,7 +4941,7 @@ impl ConversationService {
         workspace_override: Option<&str>,
     ) -> Result<BuildTaskOptions, ConversationError> {
         reject_deprecated_runtime_row(row)?;
-        let seed = self.load_aionrs_permission_seed(row).await?;
+        let seed = self.load_aionrs_runtime_seed(row).await?;
         let workspace = self.managed_workspace_bootstrap(row).await?;
         SessionContextBuilder::new(&self.workspace_root, &self.agent_metadata_repo, &self.acp_session_repo)
             .build_options_with_workspace_override(row, workspace.as_deref().or(workspace_override), seed)

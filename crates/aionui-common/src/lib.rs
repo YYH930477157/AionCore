@@ -12,6 +12,7 @@ mod error;
 pub mod error_extract;
 mod hooks;
 mod id;
+pub mod model_reasoning;
 mod pagination;
 mod timestamp;
 mod types;
