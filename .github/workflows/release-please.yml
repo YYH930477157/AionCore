@@ -3,8 +3,7 @@ name: Release Please
 on:
   push:
     branches:
-      - main
-
+      - woody
 permissions:
   contents: write
   pull-requests: write
