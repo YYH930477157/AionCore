@@ -129,6 +129,7 @@ pub(super) async fn build(
         deps.broadcaster.clone(),
     )
     .await;
+    inject_workspace_env(&mut extra_mcp_servers, &ctx.workspace);
 
     if !extra_mcp_servers.is_empty() {
         info!(
@@ -832,6 +833,32 @@ async fn session_server_to_mcp_server_config(
                 startup_timeout_ms: None,
             })
         }
+    }
+}
+
+/// Names the conversation's workspace in the environment of every stdio MCP server.
+///
+/// aionrs runs inside aioncore, so a server it spawns inherits aioncore's working
+/// directory, not the conversation's. A server that serves one project at a time
+/// (Woody's codebase memory) reads the project from here when its own
+/// configuration does not name one, which is the case for team members, whose
+/// servers come from the shared catalog row.
+pub(crate) const MCP_WORKSPACE_ENV: &str = "AIONUI_WORKSPACE";
+
+/// Adds [`MCP_WORKSPACE_ENV`] to stdio servers that do not already set it.
+fn inject_workspace_env(servers: &mut HashMap<String, McpServerConfig>, workspace: &str) {
+    if workspace.trim().is_empty() {
+        return;
+    }
+    for config in servers.values_mut() {
+        if !matches!(config.transport, TransportType::Stdio) {
+            continue;
+        }
+        config
+            .env
+            .get_or_insert_with(HashMap::new)
+            .entry(MCP_WORKSPACE_ENV.to_owned())
+            .or_insert_with(|| workspace.to_owned());
     }
 }
 
@@ -1971,6 +1998,62 @@ mod tests {
         assert_eq!(env.get("TEAM_MCP_PORT"), Some(&"9000".to_owned()));
         assert_eq!(env.get("TEAM_MCP_TOKEN"), Some(&"tok".to_owned()));
         assert_eq!(env.get("TEAM_AGENT_SLOT_ID"), Some(&"slot-1".to_owned()));
+    }
+
+    fn stdio_config(env: Option<HashMap<String, String>>) -> McpServerConfig {
+        McpServerConfig {
+            transport: TransportType::Stdio,
+            command: Some("node".into()),
+            args: Some(vec!["server.js".into()]),
+            env,
+            url: None,
+            headers: None,
+            deferred: Some(false),
+            startup_timeout_ms: None,
+        }
+    }
+
+    #[test]
+    fn inject_workspace_env_names_the_workspace_for_stdio_servers_only() {
+        let mut servers = HashMap::new();
+        servers.insert("plain".to_owned(), stdio_config(None));
+        servers.insert(
+            "bound".to_owned(),
+            stdio_config(Some(HashMap::from([(
+                MCP_WORKSPACE_ENV.to_owned(),
+                "C:\\chosen".to_owned(),
+            )]))),
+        );
+        servers.insert(
+            "remote".to_owned(),
+            McpServerConfig {
+                transport: TransportType::StreamableHttp,
+                command: None,
+                args: None,
+                env: None,
+                url: Some("http://localhost:1/mcp".into()),
+                headers: None,
+                deferred: Some(false),
+                startup_timeout_ms: None,
+            },
+        );
+
+        inject_workspace_env(&mut servers, "D:\\work\\project");
+
+        assert_eq!(
+            servers["plain"].env.as_ref().unwrap()[MCP_WORKSPACE_ENV],
+            "D:\\work\\project"
+        );
+        // A value the server's own configuration sets wins.
+        assert_eq!(servers["bound"].env.as_ref().unwrap()[MCP_WORKSPACE_ENV], "C:\\chosen");
+        assert!(servers["remote"].env.is_none());
+    }
+
+    #[test]
+    fn inject_workspace_env_skips_a_conversation_without_workspace() {
+        let mut servers = HashMap::from([("plain".to_owned(), stdio_config(None))]);
+        inject_workspace_env(&mut servers, "  ");
+        assert!(servers["plain"].env.is_none());
     }
 
     #[test]
