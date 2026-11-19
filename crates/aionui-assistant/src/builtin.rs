@@ -312,6 +312,37 @@ mod tests {
     }
 
     #[test]
+    fn module_experts_ship_with_their_skill_avatar_and_both_rule_languages() {
+        let reg = BuiltinAssistantRegistry::load_embedded();
+        let skill = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../aionui-app/assets/builtin-skills/woody-module-expert/SKILL.md");
+        let skill_text = std::fs::read_to_string(&skill).expect("the module expert skill ships with the experts");
+        assert!(skill_text.starts_with("---\nname: woody-module-expert\n"));
+        for id in [
+            "woody-alarm-expert",
+            "woody-profile-expert",
+            "woody-display-expert",
+            "woody-status-expert",
+        ] {
+            let expert = reg.get(id).unwrap_or_else(|| panic!("{id} is in the manifest"));
+            assert_eq!(expert.agent_ref, "aionrs", "{id}");
+            assert!(expert.default_enabled, "{id}");
+            assert_eq!(expert.enabled_skills, vec!["woody-module-expert".to_owned()], "{id}");
+            assert!(reg.avatar_asset(id).is_some(), "{id} avatar");
+            for locale in ["en-US", "zh-CN"] {
+                let rule = reg
+                    .rule_bytes(id, locale)
+                    .unwrap_or_else(|| panic!("{id} {locale} rule"));
+                let text = String::from_utf8(rule).expect("utf-8 rule");
+                assert!(
+                    text.contains("woody-module-expert"),
+                    "{id} {locale} rule loads the skill"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn embedded_rule_missing_locale_returns_none() {
         let reg = BuiltinAssistantRegistry::load_embedded();
         // The manifest declares rule_file as "rules/{id}.{locale}.md"; a

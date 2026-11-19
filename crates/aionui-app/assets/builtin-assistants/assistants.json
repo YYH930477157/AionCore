@@ -1147,6 +1147,174 @@
         ]
       },
       "models": []
+    },
+    {
+      "id": "woody-alarm-expert",
+      "sort_order": 1,
+      "default_enabled": true,
+      "name": "Alarm Expert",
+      "name_i18n": {
+        "en-US": "Alarm Expert",
+        "zh-CN": "告警专家"
+      },
+      "description": "Owns the alarm module of a meter firmware: learns it from the code index, keeps its feature card and checks every change.",
+      "description_i18n": {
+        "en-US": "Owns the alarm module of a meter firmware: learns it from the code index, keeps its feature card and checks every change.",
+        "zh-CN": "负责电表固件的告警模块：从代码索引熟悉模块、维护功能卡片、把关每一处改动。"
+      },
+      "avatar": "avatars/woody-alarm-expert.jpg",
+      "agent_ref": "aionrs",
+      "enabled_skills": [
+        "woody-module-expert"
+      ],
+      "custom_skill_names": [
+        "woody-codebase-memory"
+      ],
+      "disabled_builtin_skills": [],
+      "rule_file": "rules/woody-alarm-expert.{locale}.md",
+      "prompts": [
+        "Learn the alarm module of this project and complete its feature card",
+        "Where are the over-current threshold and delay stored, and who can change them?",
+        "Check the code index for gaps or stale positions in the alarm module"
+      ],
+      "prompts_i18n": {
+        "en-US": [
+          "Learn the alarm module of this project and complete its feature card",
+          "Where are the over-current threshold and delay stored, and who can change them?",
+          "Check the code index for gaps or stale positions in the alarm module"
+        ],
+        "zh-CN": [
+          "熟悉这个项目的告警模块，补全功能卡片",
+          "过流告警的阈值和延时存在哪里？谁能修改？",
+          "检查告警模块的代码索引有没有遗漏或偏移"
+        ]
+      }
+    },
+    {
+      "id": "woody-profile-expert",
+      "sort_order": 2,
+      "default_enabled": true,
+      "name": "Load Profile Expert",
+      "name_i18n": {
+        "en-US": "Load Profile Expert",
+        "zh-CN": "曲线专家"
+      },
+      "description": "Owns the load profile module of a meter firmware: capture, storage and protocol objects, learned from the code index.",
+      "description_i18n": {
+        "en-US": "Owns the load profile module of a meter firmware: capture, storage and protocol objects, learned from the code index.",
+        "zh-CN": "负责电表固件的负荷曲线模块：捕获、存储和协议对象，从代码索引熟悉并维护功能卡片。"
+      },
+      "avatar": "avatars/woody-profile-expert.jpg",
+      "agent_ref": "aionrs",
+      "enabled_skills": [
+        "woody-module-expert"
+      ],
+      "custom_skill_names": [
+        "woody-codebase-memory"
+      ],
+      "disabled_builtin_skills": [],
+      "rule_file": "rules/woody-profile-expert.{locale}.md",
+      "prompts": [
+        "Learn the load profile module of this project and complete its feature card",
+        "How is the capture period set, and where is it stored after a change?",
+        "What does a profile reset clear?"
+      ],
+      "prompts_i18n": {
+        "en-US": [
+          "Learn the load profile module of this project and complete its feature card",
+          "How is the capture period set, and where is it stored after a change?",
+          "What does a profile reset clear?"
+        ],
+        "zh-CN": [
+          "熟悉这个项目的负荷曲线模块，补全功能卡片",
+          "曲线的捕获周期怎么设置？改了以后存在哪里？",
+          "复位曲线会清掉哪些数据？"
+        ]
+      }
+    },
+    {
+      "id": "woody-display-expert",
+      "sort_order": 3,
+      "default_enabled": true,
+      "name": "Display Expert",
+      "name_i18n": {
+        "en-US": "Display Expert",
+        "zh-CN": "显示专家"
+      },
+      "description": "Owns the display module of a meter firmware: display lists, formatting, icons and the LCD driver, learned from the code index.",
+      "description_i18n": {
+        "en-US": "Owns the display module of a meter firmware: display lists, formatting, icons and the LCD driver, learned from the code index.",
+        "zh-CN": "负责电表固件的显示模块：显示列表、格式、图标和段码屏驱动，从代码索引熟悉并维护功能卡片。"
+      },
+      "avatar": "avatars/woody-display-expert.jpg",
+      "agent_ref": "aionrs",
+      "enabled_skills": [
+        "woody-module-expert"
+      ],
+      "custom_skill_names": [
+        "woody-codebase-memory"
+      ],
+      "disabled_builtin_skills": [],
+      "rule_file": "rules/woody-display-expert.{locale}.md",
+      "prompts": [
+        "Learn the display module of this project and complete its feature card",
+        "Where is the scroll list stored, and how many items can it hold?",
+        "What turns the alarm icon on?"
+      ],
+      "prompts_i18n": {
+        "en-US": [
+          "Learn the display module of this project and complete its feature card",
+          "Where is the scroll list stored, and how many items can it hold?",
+          "What turns the alarm icon on?"
+        ],
+        "zh-CN": [
+          "熟悉这个项目的显示模块，补全功能卡片",
+          "轮显列表存在哪里？最多能放多少项？",
+          "告警图标是根据什么点亮的？"
+        ]
+      }
+    },
+    {
+      "id": "woody-status-expert",
+      "sort_order": 4,
+      "default_enabled": true,
+      "name": "Status Expert",
+      "name_i18n": {
+        "en-US": "Status Expert",
+        "zh-CN": "状态专家"
+      },
+      "description": "Owns the status word module of a meter firmware: bit definitions, collection and clearing, learned from the code index.",
+      "description_i18n": {
+        "en-US": "Owns the status word module of a meter firmware: bit definitions, collection and clearing, learned from the code index.",
+        "zh-CN": "负责电表固件的状态字模块：状态位定义、汇总和清除，从代码索引熟悉并维护功能卡片。"
+      },
+      "avatar": "avatars/woody-status-expert.jpg",
+      "agent_ref": "aionrs",
+      "enabled_skills": [
+        "woody-module-expert"
+      ],
+      "custom_skill_names": [
+        "woody-codebase-memory"
+      ],
+      "disabled_builtin_skills": [],
+      "rule_file": "rules/woody-status-expert.{locale}.md",
+      "prompts": [
+        "Learn the status word module of this project and complete its feature card",
+        "What does each status bit mean, and how is it cleared?",
+        "Which modules read the status word?"
+      ],
+      "prompts_i18n": {
+        "en-US": [
+          "Learn the status word module of this project and complete its feature card",
+          "What does each status bit mean, and how is it cleared?",
+          "Which modules read the status word?"
+        ],
+        "zh-CN": [
+          "熟悉这个项目的状态字模块，补全功能卡片",
+          "状态字每一位的含义和清除方式是什么？",
+          "哪些模块会读取状态字？"
+        ]
+      }
     }
   ]
 }
