@@ -12,11 +12,24 @@ Use the `woody-codebase-memory` tools for structure (callers, callees, globals, 
 ## 1. Find your module
 
 1. If your role rules or the team task list your files, those are your files.
-2. Otherwise read `.woody/experts.json` in the project root. Find the entry whose `id` or `name` matches your module. Its `paths` are your files: `dir/` is a folder, and `*` matches inside one path segment.
+2. Otherwise read `.woody/experts.json` in the project root. Find the entry whose `id` or `name` matches your module. Projects often name a module after its code rather than its role (alarms may live in `sensor` or `event`). If no `id` or `name` matches, take the entry whose paths or description hold your module's code, and say which entry you took. Its `paths` are your files: `dir/` is a folder, and `*` matches inside one path segment.
 3. Otherwise read the "Modules" section of `.woody/architecture.md`. It lists modules found from the dispatch tables, with their files and tables.
 4. Otherwise search: `search_graph({"name_pattern":"(?i)<module word>","label":"Function","limit":50})` and `search_code` for the module's words. Your role rules list typical words and prefixes.
 
-Tell the user which files you take as yours. If they came from a search, ask the user to confirm them. Suggest saving them in `.woody/experts.json` through the Architecture panel ("Modules and experts").
+Your files are the ones that implement your module. Files you only read, call or feed are interfaces, and they belong to their own modules. Examples are the status word, the logger or load profile, measurement, NVM drivers, dispatch tables, protocol objects and factory commands. The built-in alarm, profile, display and status experts are four separate modules. Never take a file that belongs to another of them, even when your module writes into it.
+
+Tell the user which files you take as yours, in two lists:
+- your files;
+- the interfaces you depend on, each with its owner.
+
+If your files came from a search, ask the user to confirm them. Until they answer, mark the files as proposed in your card. A general "yes" confirms only the first list. Suggest saving your files in `.woody/experts.json` through the Architecture panel ("Modules and experts").
+
+When `.woody/experts.json` or the team task disagrees with the file list in your card, follow experts.json or the team task. Tell the user about the difference, and suggest correcting the card or experts.json.
+
+If you find no code for your module:
+- Say what you searched: the words, the folders, and the folders the index skips.
+- Ask where the code is: another folder, another repository, or a library.
+- Write no card until the user answers. A card for a module the project lacks becomes wrong once the code arrives.
 
 ## 2. Check the index before you rely on it
 
@@ -69,5 +82,17 @@ Do this when the user, the dispatcher or Woody asks you to learn the module, whe
 - Before you change a value, a structure, a default, an address or a function, search the whole project (`search_code` for the type, field and function names, literal values and address macros). Find every place that uses, builds or copies it: initializers, `sizeof`, `offsetof`, NVM layout, protocol ids, callers. List each with its owner. Point out copies you may not edit instead of assuming there are none.
 - Before you add a call into another module, or change data, timing or behaviour another module relies on, ask that module's owner (through the dispatcher in a team) to check the effects in their module: buffers, counters, timestamps, duplicate work, task order. Make the change only after that answer. Tell the user you are checking with the owner.
 - Keep each module's own style. Keep dispatch table order and its `#if` conditions, and follow the Change rules in `.woody/architecture.md`.
+- Say what the change does not reach:
+  - Values already stored in NVM on devices in the field keep the old value. A new default applies only on first start, after invalid NVM, or after a factory reset.
+  - Records written in the old layout are not converted.
+  - Copies in other firmware images, tools, tests or documents are not changed.
+
+  Ask before adding a migration or a version check.
 - Never write that the user confirmed something, or what a requirement means, unless the user said so. List open questions instead.
-- After the change, build when a build tool is available and report the command and its result. Then update your part of the card: never edit between the `woody:generated` markers.
+- After the change, build when a build tool is available and report the command and its result.
+- Then, in the same turn, update your card:
+  - Correct every fact the change made wrong: defaults, ranges, addresses, flow and files. Search the card for the old values.
+  - Edit only outside the `woody:generated` markers.
+  - Say in your report that the card is updated.
+
+  A card that contradicts the code misleads the next answer.
