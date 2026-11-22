@@ -1149,8 +1149,50 @@
       "models": []
     },
     {
-      "id": "woody-alarm-expert",
+      "id": "woody-meter-lead",
       "sort_order": 1,
+      "default_enabled": true,
+      "name": "Meter Lead",
+      "name_i18n": {
+        "en-US": "Meter Lead",
+        "zh-CN": "电表总管"
+      },
+      "description": "Knows the IEC / DLMS meter business end to end: keeps the project's business overview, maps each function to its code and expert, and breaks requirements down so no affected module is missed.",
+      "description_i18n": {
+        "en-US": "Knows the IEC / DLMS meter business end to end: keeps the project's business overview, maps each function to its code and expert, and breaks requirements down so no affected module is missed.",
+        "zh-CN": "熟悉 IEC / DLMS 电表的全部业务：维护项目的业务概览，把每项业务对应到代码和专家，拆需求时不漏掉任何受影响的模块。"
+      },
+      "avatar": "avatars/woody-meter-lead.jpg",
+      "agent_ref": "aionrs",
+      "enabled_skills": [
+        "woody-meter-business"
+      ],
+      "custom_skill_names": [
+        "woody-codebase-memory"
+      ],
+      "disabled_builtin_skills": [],
+      "rule_file": "rules/woody-meter-lead.{locale}.md",
+      "prompts": [
+        "Learn this project's meter business and write the business overview",
+        "We need a new neutral current fault event. What has to change?",
+        "What happens in the meter on the billing date, and where is each step in the code?"
+      ],
+      "prompts_i18n": {
+        "en-US": [
+          "Learn this project's meter business and write the business overview",
+          "We need a new neutral current fault event. What has to change?",
+          "What happens in the meter on the billing date, and where is each step in the code?"
+        ],
+        "zh-CN": [
+          "熟悉这个项目的电表业务，写出业务概览",
+          "要新增一个零线电流异常事件，需要改哪些地方？",
+          "结算日到了表里会发生什么？代码里分别在哪？"
+        ]
+      }
+    },
+    {
+      "id": "woody-alarm-expert",
+      "sort_order": 2,
       "default_enabled": true,
       "name": "Alarm Expert",
       "name_i18n": {
@@ -1192,7 +1234,7 @@
     },
     {
       "id": "woody-profile-expert",
-      "sort_order": 2,
+      "sort_order": 3,
       "default_enabled": true,
       "name": "Load Profile Expert",
       "name_i18n": {
@@ -1234,7 +1276,7 @@
     },
     {
       "id": "woody-display-expert",
-      "sort_order": 3,
+      "sort_order": 4,
       "default_enabled": true,
       "name": "Display Expert",
       "name_i18n": {
@@ -1276,7 +1318,7 @@
     },
     {
       "id": "woody-status-expert",
-      "sort_order": 4,
+      "sort_order": 5,
       "default_enabled": true,
       "name": "Status Expert",
       "name_i18n": {

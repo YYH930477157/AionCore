@@ -343,6 +343,44 @@ mod tests {
     }
 
     #[test]
+    fn meter_lead_ships_with_its_skill_avatar_and_both_rule_languages() {
+        let reg = BuiltinAssistantRegistry::load_embedded();
+        let skill = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../aionui-app/assets/builtin-skills/woody-meter-business/SKILL.md");
+        let skill_text = std::fs::read_to_string(&skill).expect("the meter business skill ships with the lead");
+        assert!(skill_text.starts_with("---\nname: woody-meter-business\n"));
+
+        let lead = reg.get("woody-meter-lead").expect("the meter lead is in the manifest");
+        assert_eq!(lead.agent_ref, "aionrs");
+        assert!(lead.default_enabled);
+        assert_eq!(lead.enabled_skills, vec!["woody-meter-business".to_owned()]);
+        assert!(reg.avatar_asset("woody-meter-lead").is_some(), "lead avatar");
+        for locale in ["en-US", "zh-CN"] {
+            let rule = reg
+                .rule_bytes("woody-meter-lead", locale)
+                .unwrap_or_else(|| panic!("lead {locale} rule"));
+            let text = String::from_utf8(rule).expect("utf-8 rule");
+            assert!(
+                text.contains("woody-meter-business"),
+                "lead {locale} rule loads the skill"
+            );
+        }
+        for expert in [
+            "woody-alarm-expert",
+            "woody-profile-expert",
+            "woody-display-expert",
+            "woody-status-expert",
+        ] {
+            let expert = reg.get(expert).expect("expert is in the manifest");
+            assert!(
+                lead.sort_order < expert.sort_order,
+                "the lead is listed before {}",
+                expert.id
+            );
+        }
+    }
+
+    #[test]
     fn embedded_rule_missing_locale_returns_none() {
         let reg = BuiltinAssistantRegistry::load_embedded();
         // The manifest declares rule_file as "rules/{id}.{locale}.md"; a
