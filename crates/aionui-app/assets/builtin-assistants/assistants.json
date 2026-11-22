@@ -484,62 +484,6 @@
       "models": []
     },
     {
-      "id": "openclaw-setup",
-      "sort_order": 170,
-      "default_enabled": false,
-      "name": "OpenClaw Setup Expert",
-      "name_i18n": {
-        "en-US": "OpenClaw Setup Expert",
-        "zh-CN": "OpenClaw 部署专家",
-        "ru-RU": "Эксперт по настройке OpenClaw",
-        "uk-UA": "Експерт з налаштування OpenClaw"
-      },
-      "description": "Expert guide for installing, deploying, configuring, and troubleshooting OpenClaw. Proactively helps with setup, diagnoses issues, and provides security best practices.",
-      "description_i18n": {
-        "en-US": "Expert guide for installing, deploying, configuring, and troubleshooting OpenClaw. Proactively helps with setup, diagnoses issues, and provides security best practices.",
-        "zh-CN": "OpenClaw 安装、部署、配置和故障排查专家。主动协助设置、诊断问题并提供安全最佳实践。",
-        "ru-RU": "Эксперт по установке, развёртыванию, настройке и устранению неполадок OpenClaw. Помогает пройти настройку, диагностирует проблемы и подсказывает безопасные практики.",
-        "uk-UA": "Експертний посібник зі встановлення, розгортання, налаштування та усунення несправностей OpenClaw. Допомагає з налаштуванням та безпекою."
-      },
-      "avatar": "avatars/openclaw-setup.jpg",
-      "agent_ref": "aionrs",
-      "enabled_skills": [
-        "openclaw-setup",
-        "aionui-webui-setup"
-      ],
-      "custom_skill_names": [],
-      "disabled_builtin_skills": [],
-      "rule_file": "rules/openclaw-setup.{locale}.md",
-      "prompts": [
-        "Help me install OpenClaw step by step",
-        "My OpenClaw isn't working, please diagnose the issue",
-        "Configure Telegram channel for OpenClaw integration"
-      ],
-      "prompts_i18n": {
-        "en-US": [
-          "Help me install OpenClaw step by step",
-          "My OpenClaw isn't working, please diagnose the issue",
-          "Configure Telegram channel for OpenClaw integration"
-        ],
-        "zh-CN": [
-          "帮我一步步安装 OpenClaw",
-          "我的 OpenClaw 出问题了，请帮我诊断",
-          "为 OpenClaw 配置 Telegram 渠道"
-        ],
-        "ru-RU": [
-          "Помоги мне установить OpenClaw пошагово",
-          "Мой OpenClaw не работает, пожалуйста, диагностируй проблему",
-          "Настрой Telegram-канал для интеграции с OpenClaw"
-        ],
-        "uk-UA": [
-          "Допоможи мені встановити OpenClaw крок за кроком",
-          "Мій OpenClaw не працює, будь ласка, діагностуй проблему",
-          "Налаштувати канал Telegram для інтеграції з OpenClaw"
-        ]
-      },
-      "models": []
-    },
-    {
       "id": "cowork",
       "sort_order": 160,
       "default_enabled": false,
@@ -811,117 +755,6 @@
       "models": []
     },
     {
-      "id": "social-job-publisher",
-      "sort_order": 180,
-      "default_enabled": false,
-      "name": "Social Job Publisher",
-      "name_i18n": {
-        "en-US": "Social Job Publisher",
-        "zh-CN": "社交招聘发布助手",
-        "ru-RU": "Публикатор вакансий в соцсетях",
-        "uk-UA": "Публікатор вакансій"
-      },
-      "description": "Expand hiring requests into a full JD, images, and publish to social platforms via connectors.",
-      "description_i18n": {
-        "en-US": "Expand hiring requests into a full JD, images, and publish to social platforms via connectors.",
-        "zh-CN": "扩写招聘需求为完整 JD 与图片，并通过 connector 发布到社交平台。",
-        "ru-RU": "Разворачивает запрос на найм в полноценное описание вакансии и изображения, а затем публикует это в соцсетях через коннекторы.",
-        "uk-UA": "Розгортає запит на найм у повноцінний опис вакансії та зображення, а потім публікує це в соцмережах через конектори."
-      },
-      "avatar": "avatars/social-job-publisher.jpg",
-      "agent_ref": "aionrs",
-      "enabled_skills": [
-        "xiaohongshu-recruiter",
-        "x-recruiter"
-      ],
-      "custom_skill_names": [],
-      "disabled_builtin_skills": [],
-      "rule_file": "rules/social-job-publisher.{locale}.md",
-      "prompts": [
-        "Create a comprehensive job post for Senior Full-Stack Engineer",
-        "Draft an engaging hiring tweet for social media",
-        "Create a multi-platform job posting (LinkedIn, X, Redbook)"
-      ],
-      "prompts_i18n": {
-        "en-US": [
-          "Create a comprehensive job post for Senior Full-Stack Engineer",
-          "Draft an engaging hiring tweet for social media",
-          "Create a multi-platform job posting (LinkedIn, X, Redbook)"
-        ],
-        "zh-CN": [
-          "创建一份高级全栈工程师的完整招聘启事",
-          "起草一条适合社交媒体的招聘推文",
-          "创建多平台职位发布（LinkedIn、X、小红书）"
-        ],
-        "ru-RU": [
-          "Создай развёрнутую вакансию на позицию Senior Full-Stack Engineer",
-          "Составь привлекательный твит о найме для соцсетей",
-          "Создай публикацию вакансии для нескольких платформ (LinkedIn, X, Xiaohongshu)"
-        ],
-        "uk-UA": [
-          "Створити повний опис вакансії Senior Full-Stack інженера",
-          "Написати цікавий пост про найм для соцмереж",
-          "Створити пост про вакансію для кількох платформ (LinkedIn, X)"
-        ]
-      },
-      "models": []
-    },
-    {
-      "id": "moltbook",
-      "sort_order": 200,
-      "default_enabled": false,
-      "name": "moltbook",
-      "name_i18n": {
-        "en-US": "moltbook",
-        "zh-CN": "moltbook",
-        "ru-RU": "moltbook",
-        "uk-UA": "moltbook"
-      },
-      "description": "The social network for AI agents. Post, comment, upvote, and create communities.",
-      "description_i18n": {
-        "en-US": "The social network for AI agents. Post, comment, upvote, and create communities.",
-        "zh-CN": "AI 代理的社交网络。发帖、评论、投票、创建社区。",
-        "ru-RU": "Социальная сеть для AI-агентов: публикации, комментарии, голосования и создание сообществ.",
-        "uk-UA": "Соціальна мережа для AI-агентів. Публікації, коментарі, голосування та створення спільнот."
-      },
-      "avatar": "avatars/moltbook.jpg",
-      "agent_ref": "aionrs",
-      "enabled_skills": [
-        "moltbook"
-      ],
-      "custom_skill_names": [],
-      "disabled_builtin_skills": [],
-      "rule_file": "rules/moltbook.{locale}.md",
-      "prompts": [
-        "Check my moltbook feed for latest updates",
-        "Post an interesting update to moltbook",
-        "Check for new direct messages"
-      ],
-      "prompts_i18n": {
-        "en-US": [
-          "Check my moltbook feed for latest updates",
-          "Post an interesting update to moltbook",
-          "Check for new direct messages"
-        ],
-        "zh-CN": [
-          "查看我的 moltbook 最新动态",
-          "在 moltbook 发布一条有趣的动态",
-          "检查是否有新私信"
-        ],
-        "ru-RU": [
-          "Проверь мою ленту moltbook на наличие новых обновлений",
-          "Опубликуй интересное обновление в moltbook",
-          "Проверь новые личные сообщения"
-        ],
-        "uk-UA": [
-          "Перевірити стрічку moltbook на наявність оновлень",
-          "Опублікувати цікавий пост у moltbook",
-          "Перевірити нові особисті повідомлення"
-        ]
-      },
-      "models": []
-    },
-    {
       "id": "beautiful-mermaid",
       "sort_order": 110,
       "default_enabled": false,
@@ -972,61 +805,6 @@
           "Намалювати детальну блок-схему автентифікації користувача",
           "Створити діаграму послідовності API для обробки платежів",
           "Створити діаграму архітектури системи"
-        ]
-      },
-      "models": []
-    },
-    {
-      "id": "story-roleplay",
-      "sort_order": 140,
-      "default_enabled": false,
-      "name": "Story Roleplay",
-      "name_i18n": {
-        "en-US": "Story Roleplay",
-        "zh-CN": "故事角色扮演",
-        "ru-RU": "Ролевые истории",
-        "uk-UA": "Рольові історії"
-      },
-      "description": "Immersive story roleplay. Start by: 1) Natural language to create characters, 2) Paste PNG images, or 3) Open folder with character cards (PNG/JSON) and world info.",
-      "description_i18n": {
-        "en-US": "Immersive story roleplay. Start by: 1) Natural language to create characters, 2) Paste PNG images, or 3) Open folder with character cards (PNG/JSON) and world info.",
-        "zh-CN": "沉浸式故事角色扮演。三种开始方式：1) 自然语言直接对话创建角色，2) 直接粘贴PNG图片，3) 打开包含角色卡（PNG/JSON）和世界书的文件夹。",
-        "ru-RU": "Иммерсивный сюжетный ролевой режим. Можно начать тремя способами: описать персонажей словами, вставить PNG-изображения или открыть папку с карточками персонажей и лором мира.",
-        "uk-UA": "Іммерсивний сюжетний рольовий режим. Можна почати трьома способами: описати персонажів словами, вставити PNG-зображення або відкрити папку з картками персонажів та лором світу."
-      },
-      "avatar": "avatars/story-roleplay.jpg",
-      "agent_ref": "aionrs",
-      "enabled_skills": [
-        "story-roleplay"
-      ],
-      "custom_skill_names": [],
-      "disabled_builtin_skills": [],
-      "rule_file": "rules/story-roleplay.{locale}.md",
-      "prompts": [
-        "Start an epic fantasy adventure with a brave warrior",
-        "Create a detailed character with backstory and personality",
-        "Begin an interactive story in a sci-fi setting"
-      ],
-      "prompts_i18n": {
-        "en-US": [
-          "Start an epic fantasy adventure with a brave warrior",
-          "Create a detailed character with backstory and personality",
-          "Begin an interactive story in a sci-fi setting"
-        ],
-        "zh-CN": [
-          "开始一个勇敢战士的史诗奇幻冒险",
-          "创建一个有背景故事和个性的详细角色",
-          "在科幻设定中开始一个互动故事"
-        ],
-        "ru-RU": [
-          "Начни эпическое фэнтези-приключение с отважным воином",
-          "Создай детального персонажа с предысторией и характером",
-          "Начни интерактивную историю в научно-фантастическом сеттинге"
-        ],
-        "uk-UA": [
-          "Почати епічну фентезі-пригоду з хоробрим воїном",
-          "Створити детального персонажа з історією та характером",
-          "Почати інтерактивну історію в науково-фантастичному сетингу"
         ]
       },
       "models": []
@@ -1097,19 +875,19 @@
         "ru-RU": "Дворецкий AionUi",
         "uk-UA": "Дворецький AionUi"
       },
-      "description": "Your all-in-one AionUi butler: set up assistants, skills, MCP servers and LLM providers; set up remote access so you can reach AionUi from your phone or share a link; and diagnose problems like stuck conversations, failing models, or a scheduled task that didn't run.",
+      "description": "Your all-in-one AionUi butler: set up assistants, skills, MCP servers and LLM providers; set up remote access so you can reach AionUi from your phone or another computer; and diagnose problems like stuck conversations, failing models, or a scheduled task that didn't run.",
       "description_i18n": {
-        "en-US": "Your all-in-one AionUi butler: set up assistants, skills, MCP servers and LLM providers; set up remote access so you can reach AionUi from your phone or share a link; and diagnose problems like stuck conversations, failing models, or a scheduled task that didn't run.",
-        "zh-CN": "你的 AionUi 全能管家：配置助手、技能、MCP 服务器与 LLM 模型；设置远程访问，让你在手机或外网也能打开 AionUi、生成分享链接；还能诊断卡住的会话、失败的模型调用，或定时任务为何没执行。",
-        "ru-RU": "Ваш универсальный дворецкий AionUi: настройка ассистентов, навыков, серверов MCP и провайдеров LLM; настройка удалённого доступа, чтобы открывать AionUi с телефона или делиться ссылкой; и диагностика проблем — зависших разговоров, сбоев моделей или почему не выполнилась запланированная задача.",
-        "uk-UA": "Ваш універсальний дворецький AionUi: налаштування асистентів, навичок, серверів MCP і провайдерів LLM; налаштування віддаленого доступу, щоб відкривати AionUi з телефона або ділитися посиланням; і діагностика проблем — зависань розмов, збоїв моделей або чому не виконалося заплановане завдання."
+        "en-US": "Your all-in-one AionUi butler: set up assistants, skills, MCP servers and LLM providers; set up remote access so you can reach AionUi from your phone or another computer; and diagnose problems like stuck conversations, failing models, or a scheduled task that didn't run.",
+        "zh-CN": "你的 AionUi 全能管家：配置助手、技能、MCP 服务器与 LLM 模型；设置远程访问，让你在手机或别的电脑上也能打开 AionUi；还能诊断卡住的会话、失败的模型调用，或定时任务为何没执行。",
+        "ru-RU": "Ваш универсальный дворецкий AionUi: настройка ассистентов, навыков, серверов MCP и провайдеров LLM; настройка удалённого доступа, чтобы открывать AionUi с телефона или другого компьютера; и диагностика проблем — зависших разговоров, сбоев моделей или почему не выполнилась запланированная задача.",
+        "uk-UA": "Ваш універсальний дворецький AionUi: налаштування асистентів, навичок, серверів MCP і провайдерів LLM; налаштування віддаленого доступу, щоб відкривати AionUi з телефона або іншого комп’ютера; і діагностика проблем — зависань розмов, збоїв моделей або чому не виконалося заплановане завдання."
       },
       "avatar": "avatars/aionui-assistant.jpg",
       "agent_ref": "aionrs",
       "enabled_skills": [
         "aionui-config",
         "aionui-troubleshooting",
-        "aionui-webui-public"
+        "aionui-webui-setup"
       ],
       "custom_skill_names": [],
       "disabled_builtin_skills": [],
