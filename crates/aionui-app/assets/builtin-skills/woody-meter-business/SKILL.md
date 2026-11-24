@@ -26,6 +26,7 @@ The OBIS codes below are typical. Check every one in the project's object list b
 | Metrology | Measures energy and instantaneous values from the metering chip; calibration coefficients in NVM; pulse LED constant; starting current and no-load behaviour | Energy registers 1.0.1.8.0.255, 1.0.2.8.0.255 (3 Register, value plus scaler_unit); instantaneous values 1.0.32.7.0.255, 1.0.31.7.0.255, 1.0.91.7.0.255 |
 | Tariffs and TOU | Switches the active tariff by season, week, day profile and special days | Activity calendar 0.0.13.0.0.255 (20), special days 0.0.11.0.0.255 (11), tariffication script table 0.0.10.0.100.255 (9) |
 | Demand | Averages power over a period (block or sliding window) and keeps the maximum per tariff | Demand registers (5), maximum demand 1.0.1.6.x.255 (4 Extended register, with capture time) |
+| QoS statistics | Average, maximum and minimum of currents, voltages and power per period, with the time of each extreme; restarted at the period end, on billing, on a time setting or at power up | Averages and extremes as Register (3) or Extended register (4, with capture time); often manufacturer objects |
 | Billing (end of billing) | On the billing date, by command or by script: snapshots registers, resets maximum demand, increments the billing counter | Single action schedule 0.0.15.0.0.255 (22), script table 0.0.10.0.1.255 (9), billing profile 1.0.98.1.0.255 (7 Profile generic), historical values with F=0..n |
 | Load profile | Captures selected values every capture period into a ring buffer with a status byte per entry | 1.0.99.1.0.255, 1.0.99.2.0.255 (7): capture_objects, capture_period, sort_method, entries_in_use, profile_entries |
 | Events and logs | Records each event with clock and event code into a fixed-size log; counts events | Event logs 0.0.99.98.x.255 (7), event code objects 0.0.96.11.x.255 (1); which x is which log depends on the companion specification |
@@ -45,7 +46,7 @@ The OBIS codes below are typical. Check every one in the project's object list b
 How the functions depend on each other, which is where requirements spread:
 - An event usually feeds the event log, an event counter, the alarm register and push, a status bit, a display icon and the load profile status byte.
 - End of billing snapshots energy and maximum demand, resets demand, and often triggers a profile capture and an event.
-- A clock change touches the load profile (status bits, missing or repeated entries), the demand period, the billing date, the tariff switch and the event log (time before and after).
+- A clock change touches the load profile (status bits, missing or repeated entries), the demand period, QoS statistics periods, the billing date, the tariff switch and the event log (time before and after).
 - A tariff switch changes which registers accumulate, which maximum demand register is active and what the display shows.
 - Power down interrupts the profile period and the demand period, must save registers in time, and is itself an event.
 - Every value the head end reads or writes is an object with access rights per association. A new value without an object, or an object without rights, is unreachable.
@@ -147,6 +148,8 @@ Ask the user, or list as open questions, before the plan is confirmed:
 | event log, event code | 事件记录、事件代码 |
 | alarm register, alarm filter, push | 告警寄存器、告警屏蔽字、主动上报 |
 | maximum demand, demand period, sliding window | 最大需量、需量周期、滑差 |
+| QoS statistics: average, maximum, minimum value | QoS 统计：平均值、最大值、最小值 |
+| clock, time setting, daylight saving | 时钟、校时、夏令时 |
 | tariff, TOU, activity calendar, special days | 费率、分时时段、时段表、特殊日 |
 | disconnector, limiter | 拉合闸（负荷开关）、限功率 |
 | status word, error register | 状态字、错误寄存器 |

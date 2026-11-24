@@ -323,6 +323,8 @@ mod tests {
             "woody-profile-expert",
             "woody-display-expert",
             "woody-status-expert",
+            "woody-qos-expert",
+            "woody-clock-expert",
         ] {
             let expert = reg.get(id).unwrap_or_else(|| panic!("{id} is in the manifest"));
             assert_eq!(expert.agent_ref, "aionrs", "{id}");
@@ -370,6 +372,8 @@ mod tests {
             "woody-profile-expert",
             "woody-display-expert",
             "woody-status-expert",
+            "woody-qos-expert",
+            "woody-clock-expert",
         ] {
             let expert = reg.get(expert).expect("expert is in the manifest");
             assert!(

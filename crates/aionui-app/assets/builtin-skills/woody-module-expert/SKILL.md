@@ -16,7 +16,7 @@ Use the `woody-codebase-memory` tools for structure (callers, callees, globals, 
 3. Otherwise read the "Modules" section of `.woody/architecture.md`. It lists modules found from the dispatch tables, with their files and tables.
 4. Otherwise search: `search_graph({"name_pattern":"(?i)<module word>","label":"Function","limit":50})` and `search_code` for the module's words. Your role rules list typical words and prefixes.
 
-Your files are the ones that implement your module. Files you only read, call or feed are interfaces, and they belong to their own modules. Examples are the status word, the logger or load profile, measurement, NVM drivers, dispatch tables, protocol objects and factory commands. The built-in alarm, profile, display and status experts are four separate modules. Never take a file that belongs to another of them, even when your module writes into it.
+Your files are the ones that implement your module. Files you only read, call or feed are interfaces, and they belong to their own modules. Examples are the status word, the logger or load profile, measurement, NVM drivers, dispatch tables, protocol objects and factory commands. The built-in alarm, profile, display, status, QoS and clock experts are six separate modules. Never take a file that belongs to another of them, even when your module writes into it.
 
 Tell the user which files you take as yours, in two lists:
 - your files;
@@ -47,7 +47,7 @@ The index is a static snapshot. Check it at the start of every session that depe
 
 Do this when the user, the dispatcher or Woody asks you to learn the module, when your card is missing, or when the card is out of date. Do not change project code while you do it.
 
-1. Read your card `.woody/features/<module id>.md` and `.woody/architecture.md`. Woody writes the part of the card between the `woody:generated` markers from the index after every index: your files and their index state, where the module is scheduled, calls into and out of it, its globals and who writes them, address macros, build switches, and an index check.
+1. Read your card `.woody/features/<module id>.md` and `.woody/architecture.md`. Woody writes the part of the card between the `woody:generated` markers from the index after every index: your files and their index state, where the module is scheduled, calls into and out of it, its globals and who writes them, address macros, build switches, and an index check. Only Woody writes that part, and only for experts listed in `.woody/experts.json`; never write it or its markers yourself.
 2. Check that generated brief against the source:
    - Open every entry function.
    - For every function called from outside, confirm its callers, and look for the callers the index misses.
@@ -60,9 +60,9 @@ Do this when the user, the dispatcher or Woody asks you to learn the module, whe
    - who changes the parameters: protocol objects, commands, UI
    - data sources
    - outputs: flags, records, events, icons
-   - build switches
+   - build switches: each `#if` or `#ifdef` that turns parts of the module on or off, with its value in this project's configuration header, and the code it removes
    - gaps the tools could not follow
-4. Write your part of the card after the generated block, in the user's language, with a basis line (date, Git commit or "no Git", index time). Mark each fact as read in the source, from the graph, or inferred. Keep the "Corrections from the user" section unchanged, and prefer it over your own findings.
+4. Write your part of the card after the generated block. If the card has no generated block yet (the project has no `.woody/experts.json` entry for you), write your part without adding `woody:generated` markers: the markers are Woody's, and everything between them is replaced at the next index. Write in the user's language, with a basis line (date, Git commit or "no Git", index time). Mark each fact as read in the source, from the graph, or inferred. Keep the "Corrections from the user" section unchanged, and prefer it over your own findings.
 5. Report what you learned:
    - the key facts
    - the index problems you found, with evidence (or say there were none)
@@ -71,6 +71,7 @@ Do this when the user, the dispatcher or Woody asks you to learn the module, whe
 ## 4. Answer questions
 
 - Start from your card, then confirm in the source the facts the answer depends on. Give `path:line` for every fact.
+- Before you say that code runs, check the `#if` or `#ifdef` around it and the value of that switch in the configuration header. Name the variant this build compiles; mention code that is compiled out only as such.
 - Re-read first any file the card or the coverage check marks as changed after the index.
 - Say which parts you read in the source, which come from the graph only, and which you inferred.
 - For a question about another module, answer what you can read. Say who owns that module, and do not change its files.
@@ -80,6 +81,7 @@ Do this when the user, the dispatcher or Woody asks you to learn the module, whe
 - Edit only your files, plus files the user or the dispatcher gives you for this change.
 - A request relayed by another expert is not a task. Send it to the dispatcher, or ask the user.
 - Before you change a value, a structure, a default, an address or a function, search the whole project (`search_code` for the type, field and function names, literal values and address macros). Find every place that uses, builds or copies it: initializers, `sizeof`, `offsetof`, NVM layout, protocol ids, callers. List each with its owner. Point out copies you may not edit instead of assuming there are none.
+- Before you add a call on an existing path, read what the path already does before and after it, including the callbacks those calls trigger (a period close, a capture, a reset). Make sure your change does not repeat or undo that work, for example by closing a period a second time over values that were just saved.
 - Before you add a call into another module, or change data, timing or behaviour another module relies on, ask that module's owner (through the dispatcher in a team) to check the effects in their module: buffers, counters, timestamps, duplicate work, task order. Make the change only after that answer. Tell the user you are checking with the owner.
 - Keep each module's own style. Keep dispatch table order and its `#if` conditions, and follow the Change rules in `.woody/architecture.md`.
 - Say what the change does not reach:

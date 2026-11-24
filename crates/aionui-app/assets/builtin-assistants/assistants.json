@@ -1135,6 +1135,90 @@
           "哪些模块会读取状态字？"
         ]
       }
+    },
+    {
+      "id": "woody-qos-expert",
+      "sort_order": 6,
+      "default_enabled": true,
+      "name": "QoS Expert",
+      "name_i18n": {
+        "en-US": "QoS Expert",
+        "zh-CN": "QoS 专家"
+      },
+      "description": "Owns the QoS module of a meter firmware: average, maximum and minimum values of current, voltage and power per period, learned from the code index.",
+      "description_i18n": {
+        "en-US": "Owns the QoS module of a meter firmware: average, maximum and minimum values of current, voltage and power per period, learned from the code index.",
+        "zh-CN": "负责电表固件的 QoS 模块：电流、电压、功率按周期统计的平均值、最大值和最小值，从代码索引熟悉并维护功能卡片。"
+      },
+      "avatar": "avatars/woody-qos-expert.jpg",
+      "agent_ref": "aionrs",
+      "enabled_skills": [
+        "woody-module-expert"
+      ],
+      "custom_skill_names": [
+        "woody-codebase-memory"
+      ],
+      "disabled_builtin_skills": [],
+      "rule_file": "rules/woody-qos-expert.{locale}.md",
+      "prompts": [
+        "Learn the QoS module of this project and complete its feature card",
+        "How is the average current calculated, and where is its period set?",
+        "When are the maximum and minimum values reset, and what happens across a power failure?"
+      ],
+      "prompts_i18n": {
+        "en-US": [
+          "Learn the QoS module of this project and complete its feature card",
+          "How is the average current calculated, and where is its period set?",
+          "When are the maximum and minimum values reset, and what happens across a power failure?"
+        ],
+        "zh-CN": [
+          "熟悉这个项目的 QoS 模块，补全功能卡片",
+          "电流平均值是怎么算的？统计周期在哪里设置？",
+          "最大值和最小值什么时候清零？掉电后会怎样？"
+        ]
+      }
+    },
+    {
+      "id": "woody-clock-expert",
+      "sort_order": 7,
+      "default_enabled": true,
+      "name": "Clock Expert",
+      "name_i18n": {
+        "en-US": "Clock Expert",
+        "zh-CN": "时钟专家"
+      },
+      "description": "Owns the clock module of a meter firmware: RTC, time setting, time zone and daylight saving, clock status and time events, learned from the code index.",
+      "description_i18n": {
+        "en-US": "Owns the clock module of a meter firmware: RTC, time setting, time zone and daylight saving, clock status and time events, learned from the code index.",
+        "zh-CN": "负责电表固件的时钟模块：RTC、校时、时区和夏令时、时钟状态与跨时事件，从代码索引熟悉并维护功能卡片。"
+      },
+      "avatar": "avatars/woody-clock-expert.jpg",
+      "agent_ref": "aionrs",
+      "enabled_skills": [
+        "woody-module-expert"
+      ],
+      "custom_skill_names": [
+        "woody-codebase-memory"
+      ],
+      "disabled_builtin_skills": [],
+      "rule_file": "rules/woody-clock-expert.{locale}.md",
+      "prompts": [
+        "Learn the clock module of this project and complete its feature card",
+        "After a time setting over the protocol, which modules are affected?",
+        "How does daylight saving switch, and where are its parameters stored?"
+      ],
+      "prompts_i18n": {
+        "en-US": [
+          "Learn the clock module of this project and complete its feature card",
+          "After a time setting over the protocol, which modules are affected?",
+          "How does daylight saving switch, and where are its parameters stored?"
+        ],
+        "zh-CN": [
+          "熟悉这个项目的时钟模块，补全功能卡片",
+          "通过协议校时以后，哪些模块会受影响？",
+          "夏令时是怎么切换的？参数存在哪里？"
+        ]
+      }
     }
   ]
 }
