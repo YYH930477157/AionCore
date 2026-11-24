@@ -1163,18 +1163,21 @@
       "prompts": [
         "Learn the QoS module of this project and complete its feature card",
         "How is the average current calculated, and where is its period set?",
-        "When are the maximum and minimum values reset, and what happens across a power failure?"
+        "When are the maximum and minimum values reset, and what happens across a power failure?",
+        "We are splitting QoS into qos_*.c files such as qos_calc.c. Agree the split plan with me first"
       ],
       "prompts_i18n": {
         "en-US": [
           "Learn the QoS module of this project and complete its feature card",
           "How is the average current calculated, and where is its period set?",
-          "When are the maximum and minimum values reset, and what happens across a power failure?"
+          "When are the maximum and minimum values reset, and what happens across a power failure?",
+          "We are splitting QoS into qos_*.c files such as qos_calc.c. Agree the split plan with me first"
         ],
         "zh-CN": [
           "熟悉这个项目的 QoS 模块，补全功能卡片",
           "电流平均值是怎么算的？统计周期在哪里设置？",
-          "最大值和最小值什么时候清零？掉电后会怎样？"
+          "最大值和最小值什么时候清零？掉电后会怎样？",
+          "QoS 要拆成 qos_calc.c 这样的一组 qos_*.c 文件，先和我商定拆分方案"
         ]
       }
     },
