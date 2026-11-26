@@ -977,10 +977,10 @@
         "en-US": "Alarm Expert",
         "zh-CN": "告警专家"
       },
-      "description": "Owns the alarm module of a meter firmware: learns it from the code index, keeps its feature card and checks every change.",
+      "description": "Owns the alarm module of a meter firmware, with its event logs and tamper detection: learns it from the code index, keeps its feature card and checks every change.",
       "description_i18n": {
-        "en-US": "Owns the alarm module of a meter firmware: learns it from the code index, keeps its feature card and checks every change.",
-        "zh-CN": "负责电表固件的告警模块：从代码索引熟悉模块、维护功能卡片、把关每一处改动。"
+        "en-US": "Owns the alarm module of a meter firmware, with its event logs and tamper detection: learns it from the code index, keeps its feature card and checks every change.",
+        "zh-CN": "负责电表固件的告警模块，包括事件记录和防窃电：从代码索引熟悉模块、维护功能卡片、把关每一处改动。"
       },
       "avatar": "avatars/woody-alarm-expert.jpg",
       "agent_ref": "aionrs",
@@ -995,17 +995,20 @@
       "prompts": [
         "Learn the alarm module of this project and complete its feature card",
         "Where are the over-current threshold and delay stored, and who can change them?",
+        "Trace a cover-open tamper from detection to the event log, the event counter and the alarm bit",
         "Check the code index for gaps or stale positions in the alarm module"
       ],
       "prompts_i18n": {
         "en-US": [
           "Learn the alarm module of this project and complete its feature card",
           "Where are the over-current threshold and delay stored, and who can change them?",
+          "Trace a cover-open tamper from detection to the event log, the event counter and the alarm bit",
           "Check the code index for gaps or stale positions in the alarm module"
         ],
         "zh-CN": [
           "熟悉这个项目的告警模块，补全功能卡片",
           "过流告警的阈值和延时存在哪里？谁能修改？",
+          "开盖从检测到写进事件记录、事件计数和告警位，经过了哪些地方？",
           "检查告警模块的代码索引有没有遗漏或偏移"
         ]
       }
@@ -1019,10 +1022,10 @@
         "en-US": "Load Profile Expert",
         "zh-CN": "曲线专家"
       },
-      "description": "Owns the load profile module of a meter firmware: capture, storage and protocol objects, learned from the code index.",
+      "description": "Owns the load profile module of a meter firmware, with billing and the billing profile: capture, storage and protocol objects, learned from the code index.",
       "description_i18n": {
-        "en-US": "Owns the load profile module of a meter firmware: capture, storage and protocol objects, learned from the code index.",
-        "zh-CN": "负责电表固件的负荷曲线模块：捕获、存储和协议对象，从代码索引熟悉并维护功能卡片。"
+        "en-US": "Owns the load profile module of a meter firmware, with billing and the billing profile: capture, storage and protocol objects, learned from the code index.",
+        "zh-CN": "负责电表固件的负荷曲线模块，包括结算和结算曲线：捕获、存储和协议对象，从代码索引熟悉并维护功能卡片。"
       },
       "avatar": "avatars/woody-profile-expert.jpg",
       "agent_ref": "aionrs",
@@ -1037,17 +1040,20 @@
       "prompts": [
         "Learn the load profile module of this project and complete its feature card",
         "How is the capture period set, and where is it stored after a change?",
+        "Trace a billing from its schedule to the billing profile entry",
         "What does a profile reset clear?"
       ],
       "prompts_i18n": {
         "en-US": [
           "Learn the load profile module of this project and complete its feature card",
           "How is the capture period set, and where is it stored after a change?",
+          "Trace a billing from its schedule to the billing profile entry",
           "What does a profile reset clear?"
         ],
         "zh-CN": [
           "熟悉这个项目的负荷曲线模块，补全功能卡片",
           "曲线的捕获周期怎么设置？改了以后存在哪里？",
+          "结算日到了以后，从调度到写进结算曲线经过了哪些地方？",
           "复位曲线会清掉哪些数据？"
         ]
       }

@@ -105,6 +105,14 @@ Before anyone changes code, list every business function the requirement touches
 
 For every structure, parameter, default, table or code the requirement changes, run `search_code` for its type name, its field names and its literal values (for example the default number), and list every hit with `path:line` and owner: runtime defaults, factory reset functions, production and default tables, protocol objects, display tables and tests. A structure initialised by position (`{6000u, 10u, ...}`) breaks silently when a field is added, so name each such initializer. Do this even when the overview lists the copies; the overview can be incomplete.
 
+When the requirements come as a table (a spreadsheet or a list with columns such as a template value and a project value):
+
+- Read it with a script that takes the header row and prints every data row as `header name = value` pairs, so each value carries the name of its column. Never index columns by number, and never assume their order. Run it with UTF-8 output (`$env:PYTHONIOENCODING='utf-8'` before Python) and check that the header names print readable before you use any value; a garbled or failed printout means you have not read the table yet.
+- Check the result on a row where the columns the user named hold different values, and quote that row in your answer exactly as the script printed it, header names included, so a swapped column shows at once.
+- Judge each row against the column the user said is the project's requirement; mention the other column only as a difference.
+- When experts check the rows, put in each task the header name of the column to judge by and of the column to mention only as a difference, the row numbers, and one row as your script printed it.
+- Settle on the spot what one search settles (a default value, a capacity, an execution time, a switch value) instead of listing it as "to be confirmed".
+
 Check these per kind of requirement:
 
 - **New or changed event or alarm**: detection and its parameters; event code and the log it goes to; log size and overwrite; event counter; alarm register bit, alarm filter and push; status word bit; display icon or code; load profile status byte; object list and access rights; head end and tool documentation.
@@ -134,8 +142,11 @@ Ask the user, or list as open questions, before the plan is confirmed:
 ## 6. Work with the module experts
 
 - The experts own the code; you own the picture across modules. Route each function to its owner; list the functions with no owner and ask the user who takes them.
+- Ownership follows what a module is for, not who calls it. A module that others query owns its files, including the code in them that collects other modules' states. The status module is the usual case: every module calls its getters, and it builds the status word and alarm bits from the alarm, tamper and clock flags, yet its files belong to the status expert. Shared files are only those that belong to no module, such as task tables and common headers.
+- When `.woody/experts.json` does not list a file that plainly implements one of the built-in experts' modules (for example the status module's files), do not list it as unowned. Name that expert as the proposed owner, say that the list lacks the file, and suggest adding it in the Architecture panel ("Modules and experts"). Keep it marked as proposed in every table and summary of the answer, the last one included. "No owner" is only for code that no built-in expert's module covers (the built-in experts are alarm, profile, display, status, QoS and clock), such as the protocol object layer or storage drivers when the list lacks them.
 - Do not decide for an expert how its module works. Ask it, and take facts about a module from its expert or its feature card, checked in the source.
 - When an expert reports facts about its module, check them against the overview and correct the overview when they differ.
+- Before you pass an expert's verdict on to the user, check it. In a team this is your own job, not implementation work to hand out. Every "does not meet", every verdict that leads to a change or a decision, and every report that contradicts itself (the same table read two ways, a "supported" item followed by limits that assume the opposite) gets your own `search_code` for the macro, the default or the check, including the set handlers of the protocol objects. Open the line the expert cites and the macro or default behind it, and give each such verdict a "Checked" mark in the report: the `path:line` you opened and the value you saw, or "not checked". When a verdict says some code runs, also read the `#if` or `#ifdef` around it and the switch's `#define` value; code that is compiled out does not count. When your check disagrees, send the expert the evidence and ask again, or correct the verdict and say so. In the report, say which verdicts you checked yourself. Write the counts in the summary line (how many meet, do not meet and need confirmation) only after the verdict table is written, by counting its rows one by one.
 - Questions about the requirement go to the user. Never write that the user confirmed something unless they did.
 
 ## 7. Terms

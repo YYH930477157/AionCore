@@ -318,6 +318,15 @@ mod tests {
             .join("../aionui-app/assets/builtin-skills/woody-module-expert/SKILL.md");
         let skill_text = std::fs::read_to_string(&skill).expect("the module expert skill ships with the experts");
         assert!(skill_text.starts_with("---\nname: woody-module-expert\n"));
+        // Live runs missed entry points and protocol bits that only outside callers showed.
+        assert!(skill_text.contains("look up the callers outside your files"));
+        // Experts in team tasks often skipped loading it, so its whole text is preloaded.
+        let frontmatter_end = skill_text[4..].find("\n---\n").expect("frontmatter closes") + 4;
+        assert!(skill_text[..frontmatter_end].contains("\npreload: true"));
+        // Preloading removed the first load call, and the codebase skill used to ride along with it.
+        assert!(skill_text.contains(
+            "Your first action, before any search or file read, is to load the `woody-codebase-memory` skill"
+        ));
         for id in [
             "woody-alarm-expert",
             "woody-profile-expert",
@@ -340,7 +349,260 @@ mod tests {
                     text.contains("woody-module-expert"),
                     "{id} {locale} rule loads the skill"
                 );
+                // In live team runs most experts started on the task without the skill.
+                let in_team = if locale == "zh-CN" {
+                    "包括在团队里收到任务或消息时"
+                } else {
+                    "including when a task or a message reaches you in a team"
+                };
+                assert!(
+                    text.contains(in_team),
+                    "{id} {locale} rule loads the skill in a team too"
+                );
+                let codebase_first = if locale == "zh-CN" {
+                    "你的第一个动作是用 `skills show` 加载 `woody-codebase-memory` 技能"
+                } else {
+                    "Your first action is to load the `woody-codebase-memory` skill with `skills show`"
+                };
+                assert!(
+                    text.contains(codebase_first),
+                    "{id} {locale} rule loads the codebase skill first"
+                );
             }
+        }
+    }
+
+    #[test]
+    fn alarm_expert_owns_event_logs_and_tamper_unless_experts_json_says_otherwise() {
+        let reg = BuiltinAssistantRegistry::load_embedded();
+        for (locale, words) in [
+            (
+                "en-US",
+                [
+                    "event logs",
+                    "tamper detection",
+                    "`event`",
+                    "`tamper`",
+                    "follow the list",
+                    // The protocol's alarm bit is often built in the status module.
+                    "alarm descriptor",
+                ],
+            ),
+            (
+                "zh-CN",
+                ["事件记录", "防窃电", "`event`", "`tamper`", "以清单为准", "告警描述符"],
+            ),
+        ] {
+            let rule = reg
+                .rule_bytes("woody-alarm-expert", locale)
+                .unwrap_or_else(|| panic!("alarm {locale} rule"));
+            let text = String::from_utf8(rule).expect("utf-8 rule");
+            for word in words {
+                assert!(text.contains(word), "alarm {locale} rule mentions {word}");
+            }
+        }
+        let alarm = reg.get("woody-alarm-expert").expect("alarm expert");
+        for locale in ["en-US", "zh-CN"] {
+            let prompts = &alarm.prompts_i18n[locale];
+            assert_eq!(prompts.len(), 4, "{locale} prompts");
+            assert!(
+                prompts.iter().any(|p| p.contains("cover-open") || p.contains("开盖")),
+                "{locale} has a tamper prompt"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_expert_owns_billing_and_its_schedule_unless_experts_json_says_otherwise() {
+        let reg = BuiltinAssistantRegistry::load_embedded();
+        for (locale, words) in [
+            (
+                "en-US",
+                [
+                    "billing profile",
+                    "Single Action Schedule",
+                    "`billing`",
+                    "`schedule`",
+                    "follow the list",
+                    // Billing is also caught up after a time setting, not only at power-up.
+                    "time-setting catch-up",
+                ],
+            ),
+            (
+                "zh-CN",
+                [
+                    "结算曲线",
+                    "单动作调度",
+                    "`billing`",
+                    "`schedule`",
+                    "以清单为准",
+                    "校时补结算",
+                ],
+            ),
+        ] {
+            let rule = reg
+                .rule_bytes("woody-profile-expert", locale)
+                .unwrap_or_else(|| panic!("profile {locale} rule"));
+            let text = String::from_utf8(rule).expect("utf-8 rule");
+            for word in words {
+                assert!(text.contains(word), "profile {locale} rule mentions {word}");
+            }
+        }
+        // The clock expert keeps the trigger but hands billing to its owner.
+        for locale in ["en-US", "zh-CN"] {
+            let rule = reg.rule_bytes("woody-clock-expert", locale).expect("clock rule");
+            let text = String::from_utf8(rule).expect("utf-8 rule");
+            assert!(
+                text.contains("usually the profile expert") || text.contains("通常是曲线专家"),
+                "clock {locale} rule names who owns billing"
+            );
+        }
+        let profile = reg.get("woody-profile-expert").expect("profile expert");
+        for locale in ["en-US", "zh-CN"] {
+            let prompts = &profile.prompts_i18n[locale];
+            assert_eq!(prompts.len(), 4, "{locale} prompts");
+            assert!(
+                prompts.iter().any(|p| p.contains("billing") || p.contains("结算")),
+                "{locale} has a billing prompt"
+            );
+        }
+    }
+
+    #[test]
+    fn status_module_files_stay_with_the_status_expert_although_every_module_calls_them() {
+        // A lead once doubted who owns the status module because every module calls its getters.
+        let reg = BuiltinAssistantRegistry::load_embedded();
+        for (id, locale, word) in [
+            ("woody-status-expert", "en-US", "does not make its files shared"),
+            ("woody-status-expert", "zh-CN", "不会因此变成共享文件"),
+            ("woody-meter-lead", "en-US", "not by who calls it"),
+            ("woody-meter-lead", "zh-CN", "不按谁调用它"),
+            // A live lead named the status expert, then still marked the work unowned at the end.
+            ("woody-meter-lead", "en-US", "the final summary included"),
+            ("woody-meter-lead", "zh-CN", "包括最后的汇总"),
+            // It then also proposed an expert that does not exist for the protocol object layer.
+            ("woody-meter-lead", "en-US", "have no built-in expert"),
+            ("woody-meter-lead", "zh-CN", "仍是无人负责"),
+            ("woody-alarm-expert", "en-US", "which belongs to the status expert"),
+            ("woody-alarm-expert", "zh-CN", "状态模块（归状态专家）"),
+        ] {
+            let rule = reg
+                .rule_bytes(id, locale)
+                .unwrap_or_else(|| panic!("{id} {locale} rule"));
+            let text = String::from_utf8(rule).expect("utf-8 rule");
+            assert!(text.contains(word), "{id} {locale} rule says {word}");
+        }
+        let skill = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../aionui-app/assets/builtin-skills/woody-meter-business/SKILL.md");
+        let skill_text = std::fs::read_to_string(&skill).expect("meter business skill");
+        assert!(skill_text.contains("Ownership follows what a module is for, not who calls it."));
+        assert!(skill_text.contains("Name that expert as the proposed owner"));
+        assert!(skill_text.contains("the last one included"));
+    }
+
+    #[test]
+    fn review_findings_are_in_the_expert_and_lead_rules() {
+        // A live review found experts naming switches without values, a display expert
+        // confusing a live tamper copy with the latched register, a QoS expert missing a
+        // compiled-out freeze path, and a lead that read a requirement table's columns swapped.
+        let reg = BuiltinAssistantRegistry::load_embedded();
+        for (id, locale, word) in [
+            ("woody-display-expert", "en-US", "whether it is live or latched"),
+            ("woody-display-expert", "zh-CN", "它是实时还是锁存"),
+            ("woody-qos-expert", "en-US", "keeps a stale last-period value"),
+            ("woody-qos-expert", "zh-CN", "上一周期的值会一直停在旧值"),
+            ("woody-qos-expert", "en-US", "closes that period at power-up"),
+            ("woody-qos-expert", "zh-CN", "上电后负荷曲线会关闭这个周期"),
+            ("woody-profile-expert", "en-US", "name each callback and its owner"),
+            ("woody-profile-expert", "zh-CN", "说出每个回调和它的负责人"),
+            (
+                "woody-profile-expert",
+                "en-US",
+                "check the days or entry-count macros too",
+            ),
+            ("woody-profile-expert", "zh-CN", "同时检查天数或条目数宏"),
+            (
+                "woody-clock-expert",
+                "en-US",
+                "say that a compiled-out entry does not exist",
+            ),
+            ("woody-clock-expert", "zh-CN", "编译掉的入口写明不存在"),
+            (
+                "woody-clock-expert",
+                "en-US",
+                "search the set handlers and the command handlers",
+            ),
+            ("woody-clock-expert", "zh-CN", "先查协议对象的设置函数和命令处理"),
+            (
+                "woody-meter-lead",
+                "en-US",
+                "prints every data row as `header name = value` pairs",
+            ),
+            ("woody-meter-lead", "zh-CN", "把每一行数据打印成“表头名 = 值”的形式"),
+            ("woody-meter-lead", "en-US", "say which verdicts you checked yourself"),
+            ("woody-meter-lead", "zh-CN", "汇报里写明哪些结论是你复核过的"),
+            ("woody-meter-lead", "en-US", "name the column to judge by"),
+            ("woody-meter-lead", "zh-CN", "照抄表头名写明按哪一列判断"),
+            (
+                "woody-meter-lead",
+                "en-US",
+                "write in a \"Checked\" column of the report",
+            ),
+            ("woody-meter-lead", "zh-CN", "在报告的“复核”列写出你打开的"),
+            (
+                "woody-meter-lead",
+                "en-US",
+                "checking is your own job, not implementation work to hand out",
+            ),
+            (
+                "woody-meter-lead",
+                "zh-CN",
+                "复核是你自己的工作，不算交给成员的实现工作",
+            ),
+            ("woody-meter-lead", "en-US", "code that is compiled out does not count"),
+            ("woody-meter-lead", "zh-CN", "编译不进去的代码不算支持"),
+            // Two live runs wrote summary counts that did not match the verdict table.
+            ("woody-meter-lead", "en-US", "by counting its rows one by one"),
+            ("woody-meter-lead", "zh-CN", "要在逐条表格写完后按表格逐行数出来再写"),
+        ] {
+            let rule = reg
+                .rule_bytes(id, locale)
+                .unwrap_or_else(|| panic!("{id} {locale} rule"));
+            let text = String::from_utf8(rule).expect("utf-8 rule");
+            assert!(text.contains(word), "{id} {locale} rule says {word}");
+        }
+        let skills = Path::new(env!("CARGO_MANIFEST_DIR")).join("../aionui-app/assets/builtin-skills");
+        let expert = std::fs::read_to_string(skills.join("woody-module-expert/SKILL.md")).expect("expert skill");
+        for word in [
+            "read the switch's `#define` in the configuration header",
+            "Never write \"if it is enabled\"",
+            "give the value for each variant",
+            "whether it follows the live condition or stays set until something clears it",
+            "search those handlers too",
+            "Open each caller line",
+            "write \"no owner\", and never name an expert that does not exist",
+            "Before your first edit",
+            "Never infer a unit from the comparison itself.",
+            "search the driver and board configuration too",
+            "ask the dispatcher which column holds the project's requirement",
+            "never use an extract file another agent wrote",
+            "Grep for `define <NAME>` across the whole workspace",
+        ] {
+            assert!(expert.contains(word), "expert skill says {word}");
+        }
+        let business = std::fs::read_to_string(skills.join("woody-meter-business/SKILL.md")).expect("business skill");
+        for word in [
+            "prints every data row as `header name = value` pairs",
+            "a garbled or failed printout means you have not read the table yet",
+            "exactly as the script printed it, header names included",
+            "Before you pass an expert's verdict on to the user, check it.",
+            "the header name of the column to judge by",
+            "give each such verdict a \"Checked\" mark in the report",
+            "In a team this is your own job, not implementation work to hand out.",
+            "code that is compiled out does not count",
+            "only after the verdict table is written, by counting its rows one by one",
+        ] {
+            assert!(business.contains(word), "business skill says {word}");
         }
     }
 
