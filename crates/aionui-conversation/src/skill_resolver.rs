@@ -112,6 +112,26 @@ async fn load_resolved_skill_bodies(skills: &[ResolvedAgentSkill]) -> Vec<Loaded
     loaded
 }
 
+/// Auto-inject skills that only work through a command the agent runs by name.
+///
+/// Offering such a skill when the command is not on `PATH` sends the model to a
+/// command that fails ("not recognized") before it falls back to its own tools.
+/// A new conversation offers the skill again once the command is installed.
+const COMMAND_SKILLS: &[(&str, &str)] = &[("officecli", "officecli")];
+
+/// Drops the auto-inject skills whose command `has_command` cannot find.
+pub(crate) fn without_missing_commands(names: Vec<String>, has_command: impl Fn(&str) -> bool) -> Vec<String> {
+    names
+        .into_iter()
+        .filter(|name| {
+            COMMAND_SKILLS
+                .iter()
+                .find(|(skill, _)| skill == name)
+                .is_none_or(|(_, command)| has_command(command))
+        })
+        .collect()
+}
+
 #[async_trait]
 impl SkillResolver for ExtensionSkillResolver {
     async fn auto_inject_names(&self) -> Vec<String> {
@@ -129,7 +149,7 @@ impl SkillResolver for ExtensionSkillResolver {
                     .map(|item| item.name)
                     .collect();
                 names.sort();
-                names
+                without_missing_commands(names, |command| aionui_runtime::resolve_command_path(command).is_some())
             }
             Err(e) => {
                 tracing::warn!(
@@ -234,6 +254,17 @@ mod tests {
             format!("---\nname: {name}\ndescription: {description}\n---\nBody"),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn a_command_skill_is_offered_only_when_its_command_is_found() {
+        let names = vec!["cron".to_string(), "officecli".to_string(), "skill-creator".to_string()];
+
+        let missing = without_missing_commands(names.clone(), |_| false);
+        assert_eq!(missing, vec!["cron".to_string(), "skill-creator".to_string()]);
+
+        let installed = without_missing_commands(names.clone(), |command| command == "officecli");
+        assert_eq!(installed, names);
     }
 
     #[test]
