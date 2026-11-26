@@ -146,6 +146,7 @@ mod tests {
         aionui_api_types::SessionFiles {
             work_dir: "/repo/.woody/sessions/2026-11-06_fix/work".into(),
             output_dir: "/repo/.woody/sessions/2026-11-06_fix/output".into(),
+            shared_by_team: false,
         }
     }
 

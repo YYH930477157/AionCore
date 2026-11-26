@@ -10,7 +10,7 @@ use axum::routing::{get, post, put};
 
 use aionui_ai_agent::ActiveLeaseRegistry;
 use aionui_api_types::{
-    AddAgentRequest, ApiResponse, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamRequest,
+    AddAgentRequest, ApiResponse, CancelTeamChildTurnRequest, CancelTeamRunRequest, CreateTeamBody,
     GetConfigOptionsResponse, InterruptTeamAgentRequest, PauseTeamSlotRequest, RenameAgentRequest, RenameTeamRequest,
     SendAgentMessageRequest, SendTeamMessageRequest, SetConfigOptionRequest, SetConfigOptionResponse, SetModeRequest,
     SetModelRequest, TeamActivityPageResponse, TeamAgentResponse, TeamContextResetAvailability,
@@ -233,10 +233,13 @@ pub fn team_routes(state: TeamRouterState) -> Router {
 async fn create_team(
     State(state): State<TeamRouterState>,
     Extension(user): Extension<CurrentUser>,
-    body: Result<Json<CreateTeamRequest>, JsonRejection>,
+    body: Result<Json<CreateTeamBody>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ApiResponse<TeamResponse>>), ApiError> {
-    let Json(req) = body.map_err(ApiError::from)?;
-    let team = state.service.create_team(&user.id, req).await?;
+    let Json(body) = body.map_err(ApiError::from)?;
+    let team = state
+        .service
+        .create_team_with_member_extras(&user.id, body.request, body.member_extras)
+        .await?;
     Ok((StatusCode::CREATED, Json(ApiResponse::ok(team))))
 }
 

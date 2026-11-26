@@ -5548,7 +5548,27 @@ impl ConversationService {
             &definition.default_mcp_ids,
             preference.as_ref().map(|row| row.last_mcp_ids.as_str()),
         )?;
+        self.classify_mcp_selection(user_id, selected_ids).await.map(Some)
+    }
 
+    /// Classify the extra MCP server ids every member of a team gets the same
+    /// way as an assistant's binding.
+    pub async fn resolve_extra_mcp_selection(
+        &self,
+        user_id: &str,
+        ids: &[String],
+    ) -> Result<TeamMcpSelection, ConversationError> {
+        self.classify_mcp_selection(user_id, ids.to_vec()).await
+    }
+
+    /// Load the selected MCP rows and split them into runtime servers, user
+    /// rows and failures. Rows that are missing or not injectable are skipped;
+    /// `selected_ids` is kept whole for the binding fingerprint.
+    async fn classify_mcp_selection(
+        &self,
+        user_id: &str,
+        selected_ids: Vec<String>,
+    ) -> Result<TeamMcpSelection, ConversationError> {
         let repo = {
             let guard = self
                 .mcp_server_repo
@@ -5591,12 +5611,12 @@ impl ConversationService {
                 mcp_server_ids.push(row.id);
             }
         }
-        Ok(Some(TeamMcpSelection {
+        Ok(TeamMcpSelection {
             selected_ids,
             mcp_server_ids,
             session_mcp_servers,
             mcp_statuses,
-        }))
+        })
     }
 
     /// Resolve and classify one assistant's current MCP binding for an existing
@@ -5609,9 +5629,21 @@ impl ConversationService {
         agent_type: &AgentType,
         extra: &serde_json::Value,
     ) -> Result<Option<(McpRuntimeSnapshot, String)>, ConversationError> {
-        let Some(selection) = self.resolve_assistant_mcp_selection(user_id, assistant_id).await? else {
+        let Some(mut selection) = self.resolve_assistant_mcp_selection(user_id, assistant_id).await? else {
             return Ok(None);
         };
+        // A team member also keeps the servers its team gave every member.
+        if let Some(extras) = aionui_api_types::TeamMemberExtras::from_conversation_extra(extra)
+            && !extras.mcp_server_ids.is_empty()
+        {
+            let mut ids = selection.selected_ids;
+            for id in extras.mcp_server_ids {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            selection = self.classify_mcp_selection(user_id, ids).await?;
+        }
         let fingerprint = assistant_mcp_binding_fingerprint(&selection.selected_ids);
         let snapshot = self
             .build_runtime_mcp_snapshot(

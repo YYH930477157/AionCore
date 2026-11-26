@@ -8497,6 +8497,99 @@ async fn create_does_not_overwrite_preferences_for_fixed_skills_and_mcps() {
 }
 
 #[tokio::test]
+async fn a_team_member_keeps_its_team_mcp_servers_when_its_assistant_binding_is_refreshed() {
+    let (svc, _broadcaster, _repo, _task_mgr) =
+        make_service_with_resolver(Arc::new(FixedSkillResolver { names: vec![] }));
+    let db = init_database_memory().await.unwrap();
+    seed_test_user(db.pool(), "user-1").await;
+    let definition_repo = Arc::new(SqliteAssistantDefinitionRepository::new(db.pool().clone()));
+    let preference_repo: Arc<dyn IAssistantPreferenceRepository> =
+        Arc::new(SqliteAssistantPreferenceRepository::new(db.pool().clone()));
+    let mcp_repo = Arc::new(aionui_db::SqliteMcpServerRepository::new(db.pool().clone()));
+    svc.with_assistant_definition_repo(definition_repo.clone());
+    svc.with_assistant_preference_repo(preference_repo);
+    svc.with_mcp_server_repo(mcp_repo.clone());
+
+    let mut ids = Vec::new();
+    for name in ["docs", "codebase-memory"] {
+        let row = aionui_db::IMcpServerRepository::create(
+            mcp_repo.as_ref(),
+            aionui_db::CreateMcpServerParams {
+                user_id: "user-1",
+                name,
+                description: None,
+                enabled: true,
+                transport_type: "stdio",
+                transport_config: r#"{"command":"node","args":["server.js"]}"#,
+                tools: None,
+                original_json: None,
+                builtin: false,
+            },
+        )
+        .await
+        .unwrap();
+        ids.push(row.id);
+    }
+    let binding = serde_json::to_string(&[ids[0].as_str()]).unwrap();
+    definition_repo
+        .upsert(&UpsertAssistantDefinitionParams {
+            id: "asstdef_expert",
+            assistant_id: "expert",
+            source: "builtin",
+            owner_type: "system",
+            source_ref: Some("expert"),
+            name: "Expert",
+            name_i18n: "{}",
+            description: Some("desc"),
+            description_i18n: "{}",
+            avatar_type: "emoji",
+            avatar_value: Some("🤖"),
+            agent_id: "aionrs",
+            rule_resource_type: "builtin_asset",
+            rule_resource_ref: Some("expert"),
+            recommended_prompts: "[]",
+            recommended_prompts_i18n: "{}",
+            default_model_mode: "auto",
+            default_model_value: None,
+            default_permission_mode: "auto",
+            default_permission_value: None,
+            default_thought_level_mode: "auto",
+            default_thought_level_value: None,
+            default_skills_mode: "auto",
+            default_skill_ids: "[]",
+            custom_skill_names: "[]",
+            default_disabled_builtin_skill_ids: "[]",
+            default_mcps_mode: "fixed",
+            default_mcp_ids: &binding,
+        })
+        .await
+        .unwrap();
+
+    let plain = json!({ "teamId": "t" });
+    let (alone, alone_fingerprint) = svc
+        .resolve_assistant_mcp_snapshot("user-1", "expert", &AgentType::Aionrs, &plain)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(alone.mcp_server_ids, vec![ids[0].clone()]);
+
+    let member = json!({
+        "teamId": "t",
+        aionui_api_types::TEAM_MEMBER_EXTRAS_KEY: { "mcp_server_ids": [ids[1].clone()] }
+    });
+    let (with_team, fingerprint) = svc
+        .resolve_assistant_mcp_snapshot("user-1", "expert", &AgentType::Aionrs, &member)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(with_team.mcp_server_ids, ids);
+    assert_ne!(fingerprint, alone_fingerprint);
+
+    let extra_only = svc.resolve_extra_mcp_selection("user-1", &ids[1..]).await.unwrap();
+    assert_eq!(extra_only.mcp_server_ids, vec![ids[1].clone()]);
+}
+
+#[tokio::test]
 async fn create_with_auto_builtin_defaults_without_preferences_keeps_snapshot_values_empty() {
     let resolver = Arc::new(FixedSkillResolver {
         names: vec!["cron".into(), "todo-tracker".into()],

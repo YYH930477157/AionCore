@@ -148,6 +148,7 @@ async fn first_prompt_carries_the_session_file_rules() {
         let files = aionui_api_types::SessionFiles {
             work_dir: "C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\work".into(),
             output_dir: "C:\\repo\\.woody\\chat-files\\2026-11-06_fix\\output".into(),
+            shared_by_team: false,
         };
         let params = fixture_params_with_files(backend, Some("Rule A"), true, Some(files)).await;
         let skill_manager = fixture_skill_manager();

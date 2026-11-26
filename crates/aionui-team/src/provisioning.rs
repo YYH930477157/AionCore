@@ -3,7 +3,8 @@ use std::sync::Arc;
 use aionui_ai_agent::IWorkerTaskManager;
 use aionui_api_types::{
     AddAgentRequest, GetConfigOptionsResponse, McpRuntimeSnapshot, SetConfigOptionRequest, SetConfigOptionResponse,
-    TeamAgentInput, TeamMcpSelection, TeamToolTransport, assistant_mcp_binding_fingerprint,
+    TEAM_MEMBER_EXTRAS_KEY, TeamAgentInput, TeamMcpSelection, TeamMemberExtras, TeamToolTransport,
+    assistant_mcp_binding_fingerprint,
 };
 use aionui_common::{AgentKillReason, AgentType, ProviderWithModel, generate_id};
 use aionui_db::models::{AgentMetadataRow, TeamRow};
@@ -52,6 +53,7 @@ struct NewAgentProvisioning {
     assistant_id: Option<String>,
     workspace: Option<String>,
     session_mode: Option<String>,
+    member_extras: Option<TeamMemberExtras>,
 }
 
 pub(crate) struct PersistSpawnedAgentRequest {
@@ -185,6 +187,27 @@ pub trait TeamConversationProvisioningPort: Send + Sync {
         assistant_id: Option<&str>,
     ) -> Result<TeamMcpSnapshotResolution, TeamError>;
 
+    /// Classify the extra MCP server ids every member of a team gets (see
+    /// [`TeamMemberExtras`]) the same way as an assistant's binding.
+    ///
+    /// The default accepts only an empty list: silently dropping servers the
+    /// team asked for would look like a member that simply has none.
+    async fn resolve_extra_mcp_selection(&self, _user_id: &str, ids: &[String]) -> Result<TeamMcpSelection, TeamError> {
+        if ids.is_empty() {
+            Ok(TeamMcpSelection::default())
+        } else {
+            Err(TeamError::InvalidRequest(
+                "extra MCP servers for team members are unavailable".to_owned(),
+            ))
+        }
+    }
+
+    /// The member extras stored on a member conversation, so a member added
+    /// later gets what the others got. `None` when there are none.
+    async fn team_member_extras(&self, _conversation_id: &str) -> Result<Option<TeamMemberExtras>, TeamError> {
+        Ok(None)
+    }
+
     async fn delete_team_conversation(&self, user_id: &str, conversation_id: &str) -> Result<(), TeamError>;
 
     async fn lookup_team_binding_by_conversation(
@@ -238,6 +261,7 @@ impl TeamAgentProvisioner {
         team_id: &str,
         inputs: &[TeamAgentInput],
         shared_workspace: Option<&str>,
+        member_extras: Option<&TeamMemberExtras>,
     ) -> Result<InitialProvisioningResult, TeamError> {
         if inputs.is_empty() {
             return Err(TeamError::InvalidRequest("at least one agent is required".into()));
@@ -268,7 +292,7 @@ impl TeamAgentProvisioner {
         // bindings below — each member follows the assistant it is bound to, so
         // this result is NOT shared across members.
         let leader_mcp_selection = self
-            .resolve_assistant_mcp_selection(user_id, leader_assistant_id.as_deref())
+            .resolve_member_mcp_selection(user_id, leader_assistant_id.as_deref(), member_extras)
             .await?;
         let leader_backend = self
             .resolve_requested_backend(user_id, leader_input.backend.as_deref(), leader_assistant_id.as_deref())
@@ -286,6 +310,7 @@ impl TeamAgentProvisioner {
                 shared_workspace,
                 None,
                 Some(&leader_mcp_selection),
+                member_extras,
             )
             .await?;
 
@@ -327,7 +352,7 @@ impl TeamAgentProvisioner {
                 .resolve_requested_backend(user_id, input.backend.as_deref(), assistant_id.as_deref())
                 .await?;
             let mcp_selection = self
-                .resolve_assistant_mcp_selection(user_id, assistant_id.as_deref())
+                .resolve_member_mcp_selection(user_id, assistant_id.as_deref(), member_extras)
                 .await?;
             let conversation = self
                 .create_team_conversation_for_agent(
@@ -342,6 +367,7 @@ impl TeamAgentProvisioner {
                     Some(&team_workspace),
                     None,
                     Some(&mcp_selection),
+                    member_extras,
                 )
                 .await?;
             agents.push(TeamAgent {
@@ -395,9 +421,11 @@ impl TeamAgentProvisioner {
         let backend = self
             .resolve_requested_backend(user_id, req.backend.as_deref(), assistant_id.as_deref())
             .await?;
+        // A member added later gets what the others got.
+        let member_extras = self.inherited_member_extras(team).await?;
         // Resolve the global MCP selection once for this agent.
         let mcp_selection = self
-            .resolve_assistant_mcp_selection(user_id, assistant_id.as_deref())
+            .resolve_member_mcp_selection(user_id, assistant_id.as_deref(), member_extras.as_ref())
             .await?;
         let agent = self
             .provision_new_agent(
@@ -412,6 +440,7 @@ impl TeamAgentProvisioner {
                     assistant_id,
                     workspace: Some(workspace),
                     session_mode: row.session_mode.clone(),
+                    member_extras,
                 },
                 Some(&mcp_selection),
             )
@@ -455,9 +484,11 @@ impl TeamAgentProvisioner {
             .ok_or_else(|| TeamError::TeamNotFound(req.team_id.clone()))?;
         let mut team = Team::from_row(&row)?;
         let workspace = self.workspace_resolver().resolve_for_new_agent(&row, &team).await?;
+        // A member the lead spawns gets what the others got.
+        let member_extras = self.inherited_member_extras(&team).await?;
         // Resolve the global MCP selection once for this spawned agent.
         let mcp_selection = self
-            .resolve_assistant_mcp_selection(&req.user_id, req.assistant_id.as_deref())
+            .resolve_member_mcp_selection(&req.user_id, req.assistant_id.as_deref(), member_extras.as_ref())
             .await?;
         let agent = self
             .provision_new_agent(
@@ -472,6 +503,7 @@ impl TeamAgentProvisioner {
                     assistant_id: req.assistant_id,
                     workspace: Some(workspace),
                     session_mode: row.session_mode.clone(),
+                    member_extras,
                 },
                 Some(&mcp_selection),
             )
@@ -567,6 +599,37 @@ impl TeamAgentProvisioner {
             .resolve_assistant_mcp_selection(user_id, assistant_id)
             .await?
             .ok_or_else(|| TeamError::InvalidRequest(format!("Assistant MCP binding is unavailable: {assistant_id}")))
+    }
+
+    /// The assistant's MCP selection plus the servers every team member gets.
+    async fn resolve_member_mcp_selection(
+        &self,
+        user_id: &str,
+        assistant_id: Option<&str>,
+        member_extras: Option<&TeamMemberExtras>,
+    ) -> Result<TeamMcpSelection, TeamError> {
+        let base = self.resolve_assistant_mcp_selection(user_id, assistant_id).await?;
+        let ids = member_extras
+            .map(|extras| extras.mcp_server_ids.as_slice())
+            .unwrap_or_default();
+        if ids.is_empty() {
+            return Ok(base);
+        }
+        let extra = self.conversation_port.resolve_extra_mcp_selection(user_id, ids).await?;
+        Ok(merge_mcp_selections(base, extra))
+    }
+
+    /// The member extras of the team's lead, which every member was created with.
+    async fn inherited_member_extras(&self, team: &Team) -> Result<Option<TeamMemberExtras>, TeamError> {
+        let Some(lead) = team
+            .agents
+            .iter()
+            .find(|agent| agent.role == TeammateRole::Lead)
+            .or_else(|| team.agents.first())
+        else {
+            return Ok(None);
+        };
+        self.conversation_port.team_member_extras(&lead.conversation_id).await
     }
 
     /// Persist the latest assistant MCP snapshot without disturbing a dormant
@@ -714,6 +777,7 @@ impl TeamAgentProvisioner {
                 input.workspace.as_deref(),
                 input.session_mode.as_deref(),
                 mcp_selection,
+                input.member_extras.as_ref(),
             )
             .await?;
         Ok(TeamAgent {
@@ -744,10 +808,11 @@ impl TeamAgentProvisioner {
         workspace: Option<&str>,
         session_mode: Option<&str>,
         mcp_selection: Option<&TeamMcpSelection>,
+        member_extras: Option<&TeamMemberExtras>,
     ) -> Result<ProvisionedConversation, TeamError> {
         let cli_metadata = cli_backend_metadata(&self.agent_metadata_repo, user_id, backend).await?;
         let agent_type = agent_type_for_backend(cli_metadata.as_ref(), backend)?;
-        let extra = self.build_team_extra(
+        let mut extra = self.build_team_extra(
             team_id,
             slot_id,
             role,
@@ -760,6 +825,9 @@ impl TeamAgentProvisioner {
             session_mode,
             mcp_selection,
         );
+        if let Some(extras) = member_extras {
+            apply_member_extras(&mut extra, extras);
+        }
         let provider_id = if agent_type == AgentType::Aionrs {
             self.resolve_provider_for_model(user_id, model)
                 .await
@@ -975,6 +1043,57 @@ fn merge_mcp_snapshot_into_patch(patch: &mut serde_json::Value, resolution: &Tea
     }
 }
 
+/// Union of two MCP selections, the first one's entries first, without repeats.
+fn merge_mcp_selections(base: TeamMcpSelection, extra: TeamMcpSelection) -> TeamMcpSelection {
+    fn union(mut kept: Vec<String>, more: Vec<String>) -> Vec<String> {
+        for value in more {
+            if !kept.contains(&value) {
+                kept.push(value);
+            }
+        }
+        kept
+    }
+    let mut merged = TeamMcpSelection {
+        selected_ids: union(base.selected_ids, extra.selected_ids),
+        mcp_server_ids: union(base.mcp_server_ids, extra.mcp_server_ids),
+        session_mcp_servers: base.session_mcp_servers,
+        mcp_statuses: base.mcp_statuses,
+    };
+    for server in extra.session_mcp_servers {
+        if !merged
+            .session_mcp_servers
+            .iter()
+            .any(|existing| existing.id == server.id)
+        {
+            merged.session_mcp_servers.push(server);
+        }
+    }
+    for status in extra.mcp_statuses {
+        if !merged.mcp_statuses.iter().any(|existing| existing.id == status.id) {
+            merged.mcp_statuses.push(status);
+        }
+    }
+    merged
+}
+
+/// Write what every team member gets into a member conversation's `extra`:
+/// the skills the conversation starts with besides its assistant's, the team's
+/// files folder, and the extras themselves for members added later and for the
+/// MCP refresh.
+fn apply_member_extras(extra: &mut serde_json::Value, extras: &TeamMemberExtras) {
+    if !extras.skills.is_empty() {
+        // `create()` merges this list with the assistant's own skills.
+        extra["enabled_skills"] = serde_json::json!(extras.skills);
+    }
+    if let Some(mut files) = extras.session_files.clone()
+        && files.is_object()
+    {
+        files["shared_by_team"] = serde_json::Value::Bool(true);
+        extra["session_files"] = files;
+    }
+    extra[TEAM_MEMBER_EXTRAS_KEY] = serde_json::to_value(extras).unwrap_or(serde_json::Value::Null);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -987,6 +1106,56 @@ mod tests {
     use aionui_db::{CreateProviderParams, DbError, UpdateProviderParams};
     use std::sync::Mutex;
     use tokio::sync::watch;
+
+    #[test]
+    fn merged_mcp_selections_keep_the_assistant_first_and_drop_repeats() {
+        let server = |id: &str| aionui_api_types::SessionMcpServer {
+            id: id.into(),
+            name: id.into(),
+            transport: aionui_api_types::SessionMcpTransport::Stdio {
+                command: "cmd".into(),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        };
+        let merged = merge_mcp_selections(
+            TeamMcpSelection {
+                selected_ids: vec!["a".into(), "builtin".into()],
+                mcp_server_ids: vec!["a".into()],
+                session_mcp_servers: vec![server("builtin")],
+                mcp_statuses: Vec::new(),
+            },
+            TeamMcpSelection {
+                selected_ids: vec!["a".into(), "codebase".into()],
+                mcp_server_ids: vec!["a".into(), "codebase".into()],
+                session_mcp_servers: vec![server("builtin")],
+                mcp_statuses: Vec::new(),
+            },
+        );
+        assert_eq!(merged.selected_ids, vec!["a", "builtin", "codebase"]);
+        assert_eq!(merged.mcp_server_ids, vec!["a", "codebase"]);
+        assert_eq!(merged.session_mcp_servers.len(), 1);
+    }
+
+    #[test]
+    fn member_extras_land_in_the_conversation_extra() {
+        let mut extra = serde_json::json!({ "teamId": "t" });
+        apply_member_extras(
+            &mut extra,
+            &TeamMemberExtras {
+                skills: vec!["woody-codebase-memory".into()],
+                mcp_server_ids: vec!["codebase".into()],
+                session_files: Some(serde_json::json!({ "dir": "d", "work_dir": "d/w", "output_dir": "d/o" })),
+            },
+        );
+        assert_eq!(extra["enabled_skills"], serde_json::json!(["woody-codebase-memory"]));
+        assert_eq!(extra["session_files"]["shared_by_team"], serde_json::json!(true));
+        assert_eq!(
+            extra[TEAM_MEMBER_EXTRAS_KEY]["mcp_server_ids"],
+            serde_json::json!(["codebase"])
+        );
+        assert_eq!(extra["teamId"], serde_json::json!("t"));
+    }
 
     struct RecordingProvisioningPort {
         events: Arc<Mutex<Vec<&'static str>>>,
@@ -1683,7 +1852,7 @@ mod tests {
         }];
 
         let error = match provisioner
-            .provision_initial_agents("user-1", "team-1", &inputs, Some("/workspace"))
+            .provision_initial_agents("user-1", "team-1", &inputs, Some("/workspace"), None)
             .await
         {
             Err(error) => error,

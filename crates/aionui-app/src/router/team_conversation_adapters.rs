@@ -535,6 +535,27 @@ impl TeamConversationProvisioningPort for TeamConversationAdapters {
             .map_err(map_conversation_update_error)
     }
 
+    async fn resolve_extra_mcp_selection(&self, user_id: &str, ids: &[String]) -> Result<TeamMcpSelection, TeamError> {
+        self.conversation_service
+            .resolve_extra_mcp_selection(user_id, ids)
+            .await
+            .map_err(map_conversation_update_error)
+    }
+
+    async fn team_member_extras(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<aionui_api_types::TeamMemberExtras>, TeamError> {
+        let Some(user_id) = self.owner_user_id(conversation_id).await? else {
+            return Ok(None);
+        };
+        let Some(row) = self.conversation_repo.get(&user_id, conversation_id).await? else {
+            return Ok(None);
+        };
+        let extra: serde_json::Value = serde_json::from_str(&row.extra).unwrap_or(serde_json::Value::Null);
+        Ok(aionui_api_types::TeamMemberExtras::from_conversation_extra(&extra))
+    }
+
     async fn resolve_conversation_mcp_snapshot(
         &self,
         user_id: &str,

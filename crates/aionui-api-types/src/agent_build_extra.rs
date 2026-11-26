@@ -70,6 +70,9 @@ pub struct SessionFiles {
     pub work_dir: String,
     /// Finished standalone deliverables the user asked for.
     pub output_dir: String,
+    /// Every member of a team keeps its files in the same folder.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared_by_team: bool,
 }
 
 /// Read `session_files` without ever failing the surrounding build: a value of
@@ -255,6 +258,7 @@ mod tests {
         let expected = SessionFiles {
             work_dir: "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\work".to_owned(),
             output_dir: "C:\\repo\\.woody\\sessions\\2026-11-06_fix\\output".to_owned(),
+            shared_by_team: false,
         };
 
         let acp: AcpBuildExtra = serde_json::from_value(extra.clone()).unwrap();

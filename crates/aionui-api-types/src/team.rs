@@ -110,6 +110,81 @@ pub struct CreateTeamRequest {
     pub workspace: Option<String>,
 }
 
+/// Key of [`TeamMemberExtras`] in a team member conversation's `extra`. Members
+/// added later inherit the lead's, and the MCP refresh reads the ids from it.
+pub const TEAM_MEMBER_EXTRAS_KEY: &str = "team_member_extras";
+
+/// What every member of a team gets on top of its own assistant: skills, MCP
+/// servers, and the folder the team keeps the files it creates in.
+///
+/// The client sends these when it creates the team, for example the codebase
+/// memory skill and server when the team's workspace has codebase memory, so
+/// that members picked by hand get the same tools as a chat in that workspace.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamMemberExtras {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_server_ids: Vec<String>,
+    /// `{dir, work_dir, output_dir}`, the same shape as a chat's
+    /// `extra.session_files`; one folder shared by the whole team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_files: Option<serde_json::Value>,
+}
+
+impl TeamMemberExtras {
+    /// At most this many skills and this many MCP server ids are kept.
+    pub const MAX_ITEMS: usize = 16;
+
+    /// Names trimmed, blanks and repeats dropped, lists capped, and a
+    /// `session_files` value without both folders dropped. `None` when nothing is left.
+    pub fn normalized(self) -> Option<Self> {
+        fn clean(values: Vec<String>) -> Vec<String> {
+            let mut kept: Vec<String> = Vec::new();
+            for value in values {
+                let value = value.trim();
+                if !value.is_empty() && !kept.iter().any(|existing| existing == value) {
+                    kept.push(value.to_owned());
+                }
+            }
+            kept.truncate(TeamMemberExtras::MAX_ITEMS);
+            kept
+        }
+        let session_files = self.session_files.filter(|value| {
+            ["work_dir", "output_dir"].iter().all(|key| {
+                value
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|dir| !dir.trim().is_empty())
+            })
+        });
+        let extras = Self {
+            skills: clean(self.skills),
+            mcp_server_ids: clean(self.mcp_server_ids),
+            session_files,
+        };
+        (extras != Self::default()).then_some(extras)
+    }
+
+    /// The extras stored in a member conversation's `extra`, if any.
+    pub fn from_conversation_extra(extra: &serde_json::Value) -> Option<Self> {
+        extra
+            .get(TEAM_MEMBER_EXTRAS_KEY)
+            .cloned()
+            .and_then(|value| serde_json::from_value::<Self>(value).ok())
+            .and_then(Self::normalized)
+    }
+}
+
+/// Body of `POST /api/teams`: the request and the extras every member gets.
+#[derive(Debug, Deserialize)]
+pub struct CreateTeamBody {
+    #[serde(flatten)]
+    pub request: CreateTeamRequest,
+    #[serde(default)]
+    pub member_extras: Option<TeamMemberExtras>,
+}
+
 /// Request body for `PATCH /api/teams/:id/name`.
 #[derive(Debug, Deserialize)]
 pub struct RenameTeamRequest {
@@ -2026,5 +2101,87 @@ mod tests {
         assert_eq!(value["message"]["read"], json!(true));
         let restored: TeamMailboxChangedPayload = serde_json::from_value(value).unwrap();
         assert_eq!(restored, payload);
+    }
+
+    #[test]
+    fn member_extras_are_trimmed_deduplicated_and_dropped_when_empty() {
+        let extras = TeamMemberExtras {
+            skills: vec![
+                " woody-codebase-memory ".into(),
+                "woody-codebase-memory".into(),
+                "  ".into(),
+            ],
+            mcp_server_ids: vec!["mcp-1".into()],
+            session_files: Some(json!({ "work_dir": "/ws/.woody/f/work", "output_dir": "" })),
+        }
+        .normalized()
+        .expect("skills and servers remain");
+        assert_eq!(extras.skills, vec!["woody-codebase-memory".to_owned()]);
+        assert_eq!(extras.mcp_server_ids, vec!["mcp-1".to_owned()]);
+        // A folder pair without both folders is not usable.
+        assert_eq!(extras.session_files, None);
+
+        assert_eq!(
+            TeamMemberExtras {
+                skills: vec![" ".into()],
+                ..Default::default()
+            }
+            .normalized(),
+            None
+        );
+        let many = TeamMemberExtras {
+            skills: (0..40).map(|i| format!("s{i}")).collect(),
+            ..Default::default()
+        };
+        assert_eq!(many.normalized().unwrap().skills.len(), TeamMemberExtras::MAX_ITEMS);
+    }
+
+    #[test]
+    fn create_team_body_reads_the_request_and_the_member_extras() {
+        let body: CreateTeamBody = serde_json::from_value(json!({
+            "name": "Meter",
+            "workspace": "/ws",
+            "agents": [{ "name": "Lead", "role": "lead", "model": "m", "assistant_id": "a-1" }],
+            "member_extras": {
+                "skills": ["woody-codebase-memory"],
+                "mcp_server_ids": ["mcp-1"],
+                "session_files": { "dir": "d", "work_dir": "d/work", "output_dir": "d/output" }
+            }
+        }))
+        .unwrap();
+        assert_eq!(body.request.name, "Meter");
+        assert_eq!(body.request.agents.len(), 1);
+        assert_eq!(body.request.workspace.as_deref(), Some("/ws"));
+        let extras = body.member_extras.unwrap().normalized().unwrap();
+        assert_eq!(extras.mcp_server_ids, vec!["mcp-1".to_owned()]);
+        assert!(extras.session_files.is_some());
+
+        // Older clients send no extras; the alias for the agent list still works.
+        let body: CreateTeamBody = serde_json::from_value(json!({
+            "name": "Meter",
+            "assistants": [{ "name": "Lead", "role": "lead", "model": "m", "assistant_id": "a-1" }]
+        }))
+        .unwrap();
+        assert!(body.member_extras.is_none());
+        assert_eq!(body.request.agents.len(), 1);
+    }
+
+    #[test]
+    fn member_extras_are_read_back_from_a_conversation_extra() {
+        let extra = json!({ TEAM_MEMBER_EXTRAS_KEY: { "mcp_server_ids": ["mcp-1"] }, "teamId": "t" });
+        assert_eq!(
+            TeamMemberExtras::from_conversation_extra(&extra)
+                .unwrap()
+                .mcp_server_ids,
+            vec!["mcp-1".to_owned()]
+        );
+        assert_eq!(
+            TeamMemberExtras::from_conversation_extra(&json!({ "teamId": "t" })),
+            None
+        );
+        assert_eq!(
+            TeamMemberExtras::from_conversation_extra(&json!({ TEAM_MEMBER_EXTRAS_KEY: "broken" })),
+            None
+        );
     }
 }

@@ -1030,6 +1030,29 @@ pub(crate) mod workspace_harness {
             Ok(TeamMcpSnapshotResolution::default())
         }
 
+        /// Every extra id is a plain user MCP row here.
+        async fn resolve_extra_mcp_selection(
+            &self,
+            _user_id: &str,
+            ids: &[String],
+        ) -> Result<TeamMcpSelection, TeamError> {
+            Ok(TeamMcpSelection {
+                selected_ids: ids.to_vec(),
+                mcp_server_ids: ids.to_vec(),
+                ..Default::default()
+            })
+        }
+
+        async fn team_member_extras(
+            &self,
+            conversation_id: &str,
+        ) -> Result<Option<aionui_api_types::TeamMemberExtras>, TeamError> {
+            Ok(self
+                .repo
+                .get_extra(conversation_id)
+                .and_then(|extra| aionui_api_types::TeamMemberExtras::from_conversation_extra(&extra)))
+        }
+
         async fn conversation_workspace(&self, conversation_id: &str) -> Result<Option<String>, TeamError> {
             Ok(self.repo.get_extra(conversation_id).and_then(|extra| {
                 extra

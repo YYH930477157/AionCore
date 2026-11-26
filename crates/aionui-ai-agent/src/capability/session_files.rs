@@ -19,10 +19,18 @@ const NON_ASCII_PATH_HINT: &str = "These paths contain non-ASCII characters, and
 pub(crate) fn session_files_rules(files: &SessionFiles) -> String {
     let work = files.work_dir.trim();
     let output = files.output_dir.trim();
+    let owner = if files.shared_by_team {
+        // Experts in one team wrote same-named extracts and read each other's in a live run.
+        "Your team shares these folders for the files its members create: every member keeps its files here. \
+         Start the name of every file you create with your own name, so you never overwrite a teammate's file, \
+         and do not rely on a teammate's file unless that teammate told you about it. Use them so the project stays clean:"
+    } else {
+        "This conversation has its own folders for the files you create. Use them so the project stays clean:"
+    };
     let mut text = format!(
         "## Files you create\n\
          \n\
-         This conversation has its own folders for the files you create. Use them so the project stays clean:\n\
+         {owner}\n\
          \n\
          - Work folder: `{work}`. Put scripts, scratch code, test data, logs and other intermediate or temporary files here.\n\
          - Output folder: `{output}`. Put finished deliverables the user asked for here, such as reports, exported data, charts or generated documents, unless the user names another place.\n\
@@ -56,6 +64,7 @@ mod tests {
         SessionFiles {
             work_dir: "C:\\repo\\.woody\\会话文件\\2026-11-06_修复串口\\过程".to_owned(),
             output_dir: "C:\\repo\\.woody\\会话文件\\2026-11-06_修复串口\\成品".to_owned(),
+            shared_by_team: false,
         }
     }
 
@@ -82,10 +91,23 @@ mod tests {
         let text = session_files_rules(&SessionFiles {
             work_dir: "C:\\repo\\.woody\\chat-files\\2026-11-06_fix_uart\\work".to_owned(),
             output_dir: "C:\\repo\\.woody\\chat-files\\2026-11-06_fix_uart\\output".to_owned(),
+            shared_by_team: false,
         });
 
         assert!(!text.contains("non-ASCII"));
         assert!(text.ends_with("give its full path."));
+    }
+
+    #[test]
+    fn a_team_folder_says_it_is_shared_and_asks_for_name_prefixes() {
+        let shared = session_files_rules(&SessionFiles {
+            shared_by_team: true,
+            ..files()
+        });
+        assert!(shared.contains("Your team shares these folders"));
+        assert!(shared.contains("Start the name of every file you create with your own name"));
+        assert!(!shared.contains("This conversation has its own folders"));
+        assert!(session_files_rules(&files()).contains("This conversation has its own folders"));
     }
 
     #[test]

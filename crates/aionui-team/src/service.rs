@@ -13,8 +13,8 @@ use aionui_api_types::{
     InterruptTeamAgentRequest, SetConfigOptionRequest, SetConfigOptionResponse, TeamActivityCursor,
     TeamActivityPageResponse, TeamAgentResponse, TeamAgentRuntimeStatus, TeamContextResetAvailability,
     TeamContextResetResponse, TeamContextResetRuntimeStatus, TeamContextResetStatus, TeamInterruptAgentResponse,
-    TeamMailboxMessageResponse, TeamResponse, TeamRunAckResponse, TeamRunStateResponse, TeamSessionBinding,
-    TeamSessionPhase, TeamSessionStatus, TeamSessionStatusPayload, TeamTaskResponse, TeamToolCall,
+    TeamMailboxMessageResponse, TeamMemberExtras, TeamResponse, TeamRunAckResponse, TeamRunStateResponse,
+    TeamSessionBinding, TeamSessionPhase, TeamSessionStatus, TeamSessionStatusPayload, TeamTaskResponse, TeamToolCall,
     TeamToolContextResponse, TeamToolErrorCode, TeamToolErrorPayload, TeamToolTransport, WebSocketMessage,
 };
 use aionui_common::{AgentKillReason, ConversationStatus, TimestampMs, generate_id, now_ms};
@@ -760,6 +760,18 @@ impl TeamSessionService {
     }
 
     pub async fn create_team(&self, user_id: &str, req: CreateTeamRequest) -> Result<TeamResponse, TeamError> {
+        self.create_team_with_member_extras(user_id, req, None).await
+    }
+
+    /// Create a team whose members all get `member_extras` on top of their
+    /// own assistants: skills, MCP servers and the team's files folder.
+    pub async fn create_team_with_member_extras(
+        &self,
+        user_id: &str,
+        req: CreateTeamRequest,
+        member_extras: Option<TeamMemberExtras>,
+    ) -> Result<TeamResponse, TeamError> {
+        let member_extras = member_extras.and_then(TeamMemberExtras::normalized);
         if req.agents.is_empty() {
             return Err(TeamError::InvalidRequest("at least one agent is required".into()));
         }
@@ -784,7 +796,13 @@ impl TeamSessionService {
 
         let provisioned = self
             .provisioner()
-            .provision_initial_agents(user_id, &team_id, &req.agents, shared_workspace.as_deref())
+            .provision_initial_agents(
+                user_id,
+                &team_id,
+                &req.agents,
+                shared_workspace.as_deref(),
+                member_extras.as_ref(),
+            )
             .await?;
         let agents = provisioned.agents;
         let lead_agent_id = provisioned.lead_agent_id;
@@ -4624,6 +4642,85 @@ mod tests {
         assert!(unhandled.is_empty());
         assert_eq!(svc.session_count_for_test(), 0);
         assert_eq!(task_manager.active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn every_member_gets_the_team_member_extras_including_one_added_later() {
+        let (svc, _repo, _task_manager, conv_repo) = setup_with_factory_metadata_team_repo_and_conversation_repo();
+        let extras = aionui_api_types::TeamMemberExtras {
+            skills: vec!["woody-codebase-memory".into()],
+            mcp_server_ids: vec!["mcp-codebase".into()],
+            session_files: Some(serde_json::json!({
+                "dir": "/ws/.woody/files/2026-11-25_meter",
+                "work_dir": "/ws/.woody/files/2026-11-25_meter/work",
+                "output_dir": "/ws/.woody/files/2026-11-25_meter/output"
+            })),
+        };
+        let created = svc
+            .create_team_with_member_extras(
+                "user-test",
+                single_agent_team_request("Member Extras"),
+                Some(extras.clone()),
+            )
+            .await
+            .unwrap();
+        let added = svc
+            .add_agent(
+                "user-test",
+                &created.id,
+                AddAgentRequest {
+                    name: "Worker".to_owned(),
+                    role: "teammate".to_owned(),
+                    backend: Some("acp".to_owned()),
+                    model: "claude".to_owned(),
+                    assistant_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let lead_conversation = created.assistants[0].conversation_id.clone();
+        for conversation_id in [lead_conversation.as_str(), added.conversation_id.as_str()] {
+            let extra = conv_repo.get_extra(conversation_id).expect("member conversation");
+            assert_eq!(
+                aionui_api_types::TeamMemberExtras::from_conversation_extra(&extra).as_ref(),
+                Some(&extras),
+                "{conversation_id} keeps the extras"
+            );
+            assert_eq!(extra["enabled_skills"], serde_json::json!(["woody-codebase-memory"]));
+            assert_eq!(extra["session_files"]["shared_by_team"], serde_json::json!(true));
+            assert_eq!(
+                extra["session_files"]["work_dir"],
+                serde_json::json!("/ws/.woody/files/2026-11-25_meter/work")
+            );
+            assert!(
+                extra["mcp_server_ids"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("mcp-codebase")),
+                "{conversation_id} gets the team's MCP server: {extra}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_team_without_extras_writes_none_into_its_members() {
+        let (svc, _repo, _task_manager, conv_repo) = setup_with_factory_metadata_team_repo_and_conversation_repo();
+        let created = svc
+            .create_team_with_member_extras(
+                "user-test",
+                single_agent_team_request("No Extras"),
+                Some(aionui_api_types::TeamMemberExtras {
+                    skills: vec!["  ".into()],
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        let extra = conv_repo.get_extra(&created.assistants[0].conversation_id).unwrap();
+        assert!(extra.get(aionui_api_types::TEAM_MEMBER_EXTRAS_KEY).is_none());
+        assert!(extra.get("session_files").is_none());
+        assert!(extra.get("enabled_skills").is_none());
     }
 
     #[tokio::test]
