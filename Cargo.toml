@@ -66,12 +66,12 @@ aionui-assistant = { path = "crates/aionui-assistant" }
 aionui-app = { path = "crates/aionui-app" }
 
 # Woody's workspace-aware runtime, pinned so a clean checkout builds the same SDK.
-aion-agent = { git = "https://github.com/YYH930477157/aionrs.git", rev = "ebe554a2d6cf8a6f9cbf5dce96fb431e4ef93b81" }
-aion-providers = { git = "https://github.com/YYH930477157/aionrs.git", rev = "ebe554a2d6cf8a6f9cbf5dce96fb431e4ef93b81" }
-aion-types = { git = "https://github.com/YYH930477157/aionrs.git", rev = "ebe554a2d6cf8a6f9cbf5dce96fb431e4ef93b81" }
-aion-protocol = { git = "https://github.com/YYH930477157/aionrs.git", rev = "ebe554a2d6cf8a6f9cbf5dce96fb431e4ef93b81" }
-aion-config = { git = "https://github.com/YYH930477157/aionrs.git", rev = "ebe554a2d6cf8a6f9cbf5dce96fb431e4ef93b81" }
-aion-mcp = { git = "https://github.com/YYH930477157/aionrs.git", rev = "ebe554a2d6cf8a6f9cbf5dce96fb431e4ef93b81" }
+aion-agent = { git = "https://github.com/YYH930477157/aionrs.git", rev = "516a090e2ca0b9a2e72f533868e3465814046b38" }
+aion-providers = { git = "https://github.com/YYH930477157/aionrs.git", rev = "516a090e2ca0b9a2e72f533868e3465814046b38" }
+aion-types = { git = "https://github.com/YYH930477157/aionrs.git", rev = "516a090e2ca0b9a2e72f533868e3465814046b38" }
+aion-protocol = { git = "https://github.com/YYH930477157/aionrs.git", rev = "516a090e2ca0b9a2e72f533868e3465814046b38" }
+aion-config = { git = "https://github.com/YYH930477157/aionrs.git", rev = "516a090e2ca0b9a2e72f533868e3465814046b38" }
+aion-mcp = { git = "https://github.com/YYH930477157/aionrs.git", rev = "516a090e2ca0b9a2e72f533868e3465814046b38" }
 
 # Core framework
 tokio = { version = "1", features = ["full"] }
