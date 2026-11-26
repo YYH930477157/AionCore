@@ -31,6 +31,72 @@ static ENV_MUTEX: Mutex<()> = Mutex::new(());
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn only_skills_that_ask_for_it_are_preloaded_with_their_folder() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    let tmp = TempDir::new().unwrap();
+    let builtin_src = tmp.path().join("builtin-skills-src");
+    let data_dir = tmp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+
+    let expert_dir = builtin_src.join("woody-module-expert");
+    fs::create_dir_all(&expert_dir).unwrap();
+    fs::write(
+        expert_dir.join("SKILL.md"),
+        "---\nname: woody-module-expert\ndescription: Module expert\npreload: true\n---\n\n# Module expert\n\nCheck the index.\n",
+    )
+    .unwrap();
+    let listed_dir = builtin_src.join("mermaid");
+    fs::create_dir_all(&listed_dir).unwrap();
+    fs::write(
+        listed_dir.join("SKILL.md"),
+        "---\nname: mermaid\ndescription: Mermaid diagrams\n---\nBody",
+    )
+    .unwrap();
+    let user_dir = data_dir.join("skills").join("my-preloaded");
+    fs::create_dir_all(&user_dir).unwrap();
+    fs::write(
+        user_dir.join("SKILL.md"),
+        "---\nname: my-preloaded\ndescription: User skill\npreload: true\n---\nUser body",
+    )
+    .unwrap();
+
+    unsafe {
+        std::env::set_var(BUILTIN_SKILLS_ENV_VAR, &builtin_src);
+    }
+    let paths = Arc::new(resolve_skill_paths(tmp.path(), &data_dir));
+    let mgr = AcpSkillManager::new(paths);
+
+    let names: Vec<String> = ["woody-module-expert", "mermaid", "my-preloaded"]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    let preloaded = mgr.preloaded_skills_for_user("system_default_user", &names).await;
+
+    let found: Vec<&str> = preloaded.iter().map(|skill| skill.name.as_str()).collect();
+    assert_eq!(found, vec!["my-preloaded", "woody-module-expert"]);
+    let expert = &preloaded[1];
+    assert_eq!(expert.body, "# Module expert\n\nCheck the index.");
+    assert!(
+        expert.directory.ends_with("woody-module-expert"),
+        "{:?}",
+        expert.directory
+    );
+    assert!(expert.directory.join("SKILL.md").exists());
+    assert_eq!(preloaded[0].body, "User body");
+    assert!(preloaded[0].directory.ends_with("my-preloaded"));
+
+    // A skill the conversation does not have is never preloaded.
+    let only_listed = mgr
+        .preloaded_skills_for_user("system_default_user", &["mermaid".to_string()])
+        .await;
+    assert!(only_listed.is_empty());
+
+    unsafe {
+        std::env::remove_var(BUILTIN_SKILLS_ENV_VAR);
+    }
+}
+
+#[tokio::test]
 async fn discover_skills_uses_extension_service_layout() {
     let _guard = ENV_MUTEX.lock().unwrap();
     let tmp = TempDir::new().unwrap();

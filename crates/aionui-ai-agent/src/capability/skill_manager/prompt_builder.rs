@@ -56,6 +56,28 @@ impl SkillCommandSyntax {
     }
 }
 
+/// Marks a preloaded skill's index entry, so the agent does not fetch it again.
+pub const PRELOADED_SKILL_MARK: &str = "(Loaded in full below; do not run `skills show` for it.)";
+
+/// The full text of the preloaded skills, for after the skills index; `""` when
+/// there are none. Each one names its folder, because a skill's text refers to
+/// its own files by relative path and the agent's working directory is the
+/// user's workspace.
+pub fn build_preloaded_skills_text(skills: &[super::PreloadedSkill]) -> String {
+    skills
+        .iter()
+        .map(|skill| {
+            format!(
+                "## Skill: {} (loaded)\n\nFollow this skill. Its folder is `{}`; read the files it mentions by relative path from there.\n\n{}",
+                skill.name,
+                skill.directory.display(),
+                skill.body
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// [`build_skills_index_text`] for an explicit syntax, so both forms stay testable on any host.
 pub fn build_skills_index_text_with(skills: &[SkillIndex], syntax: SkillCommandSyntax) -> String {
     if skills.is_empty() {

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use aionui_db::ISkillRepository;
@@ -30,6 +30,17 @@ pub struct SkillDefinition {
     pub relative_location: Option<String>,
     /// Lazily-loaded full content (body after frontmatter).
     pub body: Option<String>,
+}
+
+/// A skill whose whole text goes into the system prompt because its SKILL.md
+/// says `preload: true` (see [`aionui_extension::skill_wants_preload`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreloadedSkill {
+    pub name: String,
+    /// The skill's own folder, which the relative paths in its text refer to.
+    pub directory: PathBuf,
+    /// The text after the frontmatter.
+    pub body: String,
 }
 
 /// Lightweight skill reference for index listings.
@@ -292,6 +303,52 @@ impl AcpSkillManager {
         }
     }
 
+    /// The skills among `names` whose SKILL.md asks to be preloaded, with their
+    /// bodies, sorted by name. Lists the skills itself rather than reading the
+    /// shared discovery cache, which another conversation may be refilling.
+    pub async fn preloaded_skills_for_user(&self, user_id: &str, names: &[String]) -> Vec<PreloadedSkill> {
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let items = match self.list_available_skills_for_user(user_id).await {
+            Ok(items) => items,
+            Err(e) => {
+                warn!(error = %e, "preloaded_skills: list_available_skills failed");
+                return Vec::new();
+            }
+        };
+        let mut preloaded = Vec::new();
+        for item in items {
+            if !names.contains(&item.name) {
+                continue;
+            }
+            let location = PathBuf::from(&item.location);
+            let content = read_skill_content(
+                &self.paths,
+                &item.name,
+                item.source,
+                &location,
+                item.relative_location.as_deref(),
+            )
+            .await;
+            if !aionui_extension::skill_wants_preload(&content) {
+                continue;
+            }
+            let directory = if location.is_dir() {
+                location
+            } else {
+                location.parent().map(Path::to_path_buf).unwrap_or(location)
+            };
+            preloaded.push(PreloadedSkill {
+                name: item.name,
+                directory,
+                body: extract_body(&content).trim().to_owned(),
+            });
+        }
+        preloaded.sort_by(|a, b| a.name.cmp(&b.name));
+        preloaded
+    }
+
     /// Return the current skill index without re-scanning.
     pub async fn get_skills_index(&self) -> Vec<SkillIndex> {
         let cache = self.cache.read().await;
@@ -328,39 +385,14 @@ impl AcpSkillManager {
             return Some(def.clone());
         }
 
-        let content = match def.source {
-            aionui_extension::SkillSource::Builtin => {
-                if let Some(rel) = def.relative_location.as_deref() {
-                    match aionui_extension::read_builtin_skill(&self.paths, rel).await {
-                        Ok(s) => s,
-                        Err(e) => {
-                            warn!(skill = name, error = %e, "Failed to read builtin skill");
-                            String::new()
-                        }
-                    }
-                } else {
-                    warn!(skill = name, "Builtin skill missing relative_location");
-                    String::new()
-                }
-            }
-            aionui_extension::SkillSource::Custom
-            | aionui_extension::SkillSource::Cron
-            | aionui_extension::SkillSource::Extension => {
-                // `location` for scanned user skills is the directory; append SKILL.md.
-                let skill_file = if def.location.is_dir() {
-                    def.location.join("SKILL.md")
-                } else {
-                    def.location.clone()
-                };
-                match tokio::fs::read_to_string(&skill_file).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!(skill = name, path = %skill_file.display(), error = %e, "Failed to read skill file");
-                        String::new()
-                    }
-                }
-            }
-        };
+        let content = read_skill_content(
+            &self.paths,
+            name,
+            def.source,
+            &def.location,
+            def.relative_location.as_deref(),
+        )
+        .await;
 
         if content.is_empty() {
             return None;
@@ -390,6 +422,51 @@ pub fn detect_skill_load_request(content: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/// A skill's whole SKILL.md, read through the channel its source uses, or `""`
+/// when it cannot be read:
+/// - `Builtin` -> `aionui_extension::read_builtin_skill(&paths, relative)`
+/// - `Custom` / `Cron` / `Extension` -> `location/SKILL.md` (or `location` when it is the file)
+async fn read_skill_content(
+    paths: &aionui_extension::SkillPaths,
+    name: &str,
+    source: aionui_extension::SkillSource,
+    location: &Path,
+    relative_location: Option<&str>,
+) -> String {
+    match source {
+        aionui_extension::SkillSource::Builtin => {
+            let Some(rel) = relative_location else {
+                warn!(skill = name, "Builtin skill missing relative_location");
+                return String::new();
+            };
+            match aionui_extension::read_builtin_skill(paths, rel).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(skill = name, error = %e, "Failed to read builtin skill");
+                    String::new()
+                }
+            }
+        }
+        aionui_extension::SkillSource::Custom
+        | aionui_extension::SkillSource::Cron
+        | aionui_extension::SkillSource::Extension => {
+            // `location` for scanned user skills is the directory; append SKILL.md.
+            let skill_file = if location.is_dir() {
+                location.join("SKILL.md")
+            } else {
+                location.to_path_buf()
+            };
+            match tokio::fs::read_to_string(&skill_file).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(skill = name, path = %skill_file.display(), error = %e, "Failed to read skill file");
+                    String::new()
+                }
+            }
+        }
+    }
+}
 
 /// Extract the body content after YAML frontmatter.
 fn extract_body(content: &str) -> String {

@@ -48,9 +48,10 @@ pub use aionui_api_types::{AcpBuildExtra, AcpModelInfo, AionrsBuildExtra, SlashC
 pub use aionui_session::backend_supports_midturn_delivery;
 pub use aionui_session::effective_agent_capabilities;
 pub use capability::skill_manager::{
-    AcpSkillManager, SkillCommandSyntax, SkillDefinition, SkillIndex, build_skills_index_text,
-    build_skills_index_text_with, build_system_instructions, build_system_instructions_with_skills_index,
-    detect_skill_load_request, prepare_first_message, prepare_first_message_with_skills_index,
+    AcpSkillManager, PRELOADED_SKILL_MARK, PreloadedSkill, SkillCommandSyntax, SkillDefinition, SkillIndex,
+    build_preloaded_skills_text, build_skills_index_text, build_skills_index_text_with, build_system_instructions,
+    build_system_instructions_with_skills_index, detect_skill_load_request, prepare_first_message,
+    prepare_first_message_with_skills_index,
 };
 pub use error::AgentError;
 pub use factory::{AgentFactoryDeps, build_agent_factory};

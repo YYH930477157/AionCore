@@ -27,10 +27,36 @@ use crate::runtime_status::conversation_runtime_reporter;
 use crate::session_context::AionrsSessionBuildContext;
 use crate::types::{AionrsCompatOverrides, AionrsResolvedConfig};
 
-/// Render this conversation's skills index, or `""` when there is nothing to add.
+/// Render this conversation's skills index followed by the full text of the
+/// skills that ask to be preloaded, or `""` when there is nothing to add.
 async fn skill_index_text(deps: &AgentFactoryDeps, user_id: &str, skills: &[String]) -> String {
     let index = deps.skill_manager.discover_by_names_for_user(user_id, skills).await;
-    crate::capability::skill_manager::build_skills_index_text(&index)
+    let preloaded = deps.skill_manager.preloaded_skills_for_user(user_id, skills).await;
+    compose_skills_text(index, &preloaded)
+}
+
+/// The index with each preloaded skill marked, then those skills' text.
+///
+/// Pure so the composition is testable without a skill corpus.
+fn compose_skills_text(
+    mut index: Vec<crate::capability::skill_manager::SkillIndex>,
+    preloaded: &[crate::capability::skill_manager::PreloadedSkill],
+) -> String {
+    use crate::capability::skill_manager::{
+        PRELOADED_SKILL_MARK, build_preloaded_skills_text, build_skills_index_text,
+    };
+    for entry in &mut index {
+        if preloaded.iter().any(|skill| skill.name == entry.name) {
+            // At the front: the index shortens long descriptions at the end.
+            entry.description = format!("{PRELOADED_SKILL_MARK} {}", entry.description);
+        }
+    }
+    let parts = [build_skills_index_text(&index), build_preloaded_skills_text(preloaded)];
+    parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Append the index to the system prompt, keeping the assistant's own rules in
@@ -2442,6 +2468,42 @@ mod tests {
     /// aionrs is layer 2 and has no prompt pipeline, so `system_prompt` is its
     /// only injection channel. Its skills used to arrive solely through the
     /// workspace `.aionrs/skills` links this refactor removes.
+    #[test]
+    fn preloaded_skills_are_marked_in_the_index_and_follow_it_in_full() {
+        use crate::capability::skill_manager::{PRELOADED_SKILL_MARK, PreloadedSkill, SkillIndex};
+        let index = vec![
+            SkillIndex {
+                name: "woody-module-expert".into(),
+                description: "Use when you are the expert for one module".into(),
+            },
+            SkillIndex {
+                name: "woody-codebase-memory".into(),
+                description: "Code graph tools".into(),
+            },
+        ];
+        let preloaded = vec![PreloadedSkill {
+            name: "woody-module-expert".into(),
+            directory: std::path::PathBuf::from("/skills/woody-module-expert"),
+            body: "# Module expert\n\nCheck the index first.".into(),
+        }];
+
+        let text = compose_skills_text(index.clone(), &preloaded);
+
+        assert!(text.contains(&format!("- **woody-module-expert**: {PRELOADED_SKILL_MARK} Use when")));
+        assert!(text.contains("- **woody-codebase-memory**: Code graph tools"));
+        let full = text
+            .find("## Skill: woody-module-expert (loaded)")
+            .expect("the preloaded text follows");
+        assert!(full > text.find("## Available Skills").unwrap());
+        assert!(text.contains("Its folder is `/skills/woody-module-expert`"));
+        assert!(text.ends_with("# Module expert\n\nCheck the index first."));
+
+        // Nothing preloaded: the index alone, unchanged.
+        let plain = compose_skills_text(index.clone(), &[]);
+        assert_eq!(plain, crate::capability::skill_manager::build_skills_index_text(&index));
+        assert_eq!(compose_skills_text(Vec::new(), &[]), "");
+    }
+
     #[test]
     fn the_skills_index_is_appended_after_the_assistant_rules() {
         let index = crate::capability::skill_manager::build_skills_index_text(&[

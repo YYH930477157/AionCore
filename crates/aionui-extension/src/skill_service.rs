@@ -2094,6 +2094,21 @@ pub fn parse_frontmatter_fields(content: &str) -> Option<(String, String)> {
     Some((parsed.name.trim().to_string(), description))
 }
 
+/// Whether a SKILL.md asks to be preloaded (`preload: true` in its frontmatter):
+/// an agent then gets its whole text in the system prompt instead of only an
+/// index entry it has to choose to load. For skills an assistant cannot work
+/// without, which agents skipped in live runs when they only saw the index.
+pub fn skill_wants_preload(content: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    struct PreloadFrontmatter {
+        #[serde(default)]
+        preload: bool,
+    }
+    extract_frontmatter_text(content)
+        .and_then(|frontmatter| serde_yaml::from_str::<PreloadFrontmatter>(frontmatter).ok())
+        .is_some_and(|parsed| parsed.preload)
+}
+
 fn extract_frontmatter_text(content: &str) -> Option<&str> {
     let after_open = content
         .strip_prefix("---\n")
@@ -2176,6 +2191,23 @@ mod tests {
         let (name, desc) = parse_frontmatter_fields(content).unwrap();
         assert_eq!(name, "my-skill");
         assert_eq!(desc, "A useful skill");
+    }
+
+    #[test]
+    fn preload_is_read_from_the_frontmatter_and_off_by_default() {
+        let preloaded = "---\nname: expert\ndescription: Expert\npreload: true\n---\n# Body\n";
+        assert!(skill_wants_preload(preloaded));
+        assert_eq!(
+            parse_frontmatter_fields(preloaded),
+            Some(("expert".to_owned(), "Expert".to_owned()))
+        );
+        assert!(!skill_wants_preload(
+            "---\nname: plain\ndescription: Plain\n---\nBody\n"
+        ));
+        assert!(!skill_wants_preload(
+            "---\nname: off\ndescription: Off\npreload: false\n---\n"
+        ));
+        assert!(!skill_wants_preload("No frontmatter, preload: true"));
     }
 
     #[test]
