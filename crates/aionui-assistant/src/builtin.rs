@@ -373,6 +373,32 @@ mod tests {
     }
 
     #[test]
+    fn module_expert_skill_requires_comprehensive_feature_cards() {
+        let skill = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../aionui-app/assets/builtin-skills/woody-module-expert/SKILL.md");
+        let text = std::fs::read_to_string(&skill).expect("expert skill");
+        for phrase in [
+            "alarms, load profile, display, status word, QoS, clock",
+            "never `woody-*-expert.md`",
+            "Account for every `.c` and `.h` file you own",
+            "full lifecycle",
+            "Core data structures & state machines",
+            "positional initializers",
+            "every copy or factory-reset site",
+            "field NVM upgrade compatibility",
+            "Protocol objects & who changes parameters",
+            "external globals this module reads or writes",
+            "concurrency or reentrancy constraints",
+            "without repeating the leading `# <Expert Name>` H1 title",
+            "files checked",
+            "user notes alone never count as a completed card",
+            "every owned file is accounted for and every required section above is present",
+        ] {
+            assert!(text.contains(phrase), "expert skill requires: {phrase}");
+        }
+    }
+
+    #[test]
     fn alarm_expert_owns_event_logs_and_tamper_unless_experts_json_says_otherwise() {
         let reg = BuiltinAssistantRegistry::load_embedded();
         for (locale, words) in [
